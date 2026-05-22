@@ -28,6 +28,8 @@ export {
 } from './types';
 
 export { detectGesture, detectGestures, runAllChecks } from './gestureDetector';
+export { GestureDebouncer } from './gestureDebouncer';
+export { TapDetector } from './tapDetector';
 export { detectExpression } from './faceExpression';
 export type { ExpressionType, DetectedExpression } from './faceExpression';
 export {
