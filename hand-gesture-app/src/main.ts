@@ -40,6 +40,20 @@ interface Results {
   image: HTMLCanvasElement | HTMLImageElement | ImageBitmap;
 }
 
+// Extend Window interface for our video display properties
+declare global {
+  interface Window {
+    videoDisplay: {
+      width: number;
+      height: number;
+      offsetX: number;
+      offsetY: number;
+      scaleX: number;
+      scaleY: number;
+    };
+  }
+}
+
 interface HandsInterface {
   close(): Promise<void>;
   onResults(listener: (results: Results) => void): void;
@@ -190,9 +204,16 @@ function drawHand(landmarks: NormalizedLandmark[], color: string, connections: [
     const endLandmark = landmarks[end];
     
     if (startLandmark && endLandmark) {
+      const display = window.videoDisplay;
       canvasCtx.beginPath();
-      canvasCtx.moveTo(startLandmark.x * canvasElement.width, startLandmark.y * canvasElement.height);
-      canvasCtx.lineTo(endLandmark.x * canvasElement.width, endLandmark.y * canvasElement.height);
+      canvasCtx.moveTo(
+        display.offsetX + startLandmark.x * display.width,
+        display.offsetY + startLandmark.y * display.height
+      );
+      canvasCtx.lineTo(
+        display.offsetX + endLandmark.x * display.width,
+        display.offsetY + endLandmark.y * display.height
+      );
       canvasCtx.strokeStyle = color;
       canvasCtx.lineWidth = LINE_WIDTH;
       canvasCtx.stroke();
@@ -201,10 +222,11 @@ function drawHand(landmarks: NormalizedLandmark[], color: string, connections: [
 
   // Draw landmarks (points)
   landmarks.forEach((landmark) => {
+    const display = window.videoDisplay;
     canvasCtx.beginPath();
     canvasCtx.arc(
-      landmark.x * canvasElement.width,
-      landmark.y * canvasElement.height,
+      display.offsetX + landmark.x * display.width,
+      display.offsetY + landmark.y * display.height,
       POINT_RADIUS,
       0,
       2 * Math.PI
@@ -346,9 +368,40 @@ function updateGlyphDisplays(
  * Handle hand detection results
  */
 function onResults(results: Results): void {
-  // Resize canvas to match video
-  canvasElement.width = videoElement.videoWidth;
-  canvasElement.height = videoElement.videoHeight;
+  // Calculate video display dimensions with object-fit: contain
+  const videoAspectRatio = videoElement.videoWidth / videoElement.videoHeight;
+  const containerWidth = videoElement.clientWidth;
+  const containerHeight = videoElement.clientHeight;
+  
+  let displayWidth, displayHeight, offsetX = 0, offsetY = 0;
+  
+  if (containerWidth / containerHeight > videoAspectRatio) {
+    // Container is wider than video - fit to height
+    displayHeight = containerHeight;
+    displayWidth = containerHeight * videoAspectRatio;
+    offsetX = (containerWidth - displayWidth) / 2;
+  } else {
+    // Container is taller than video - fit to width
+    displayWidth = containerWidth;
+    displayHeight = containerWidth / videoAspectRatio;
+    offsetY = (containerHeight - displayHeight) / 2;
+  }
+
+  // Set canvas to match container size and position
+  canvasElement.width = containerWidth;
+  canvasElement.height = containerHeight;
+  canvasElement.style.width = `${containerWidth}px`;
+  canvasElement.style.height = `${containerHeight}px`;
+  
+  // Store scaling factors for landmark drawing
+  window.videoDisplay = {
+    width: displayWidth,
+    height: displayHeight,
+    offsetX: offsetX,
+    offsetY: offsetY,
+    scaleX: displayWidth / videoElement.videoWidth,
+    scaleY: displayHeight / videoElement.videoHeight
+  };
 
   // Clear canvas
   canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
@@ -365,7 +418,8 @@ function onResults(results: Results): void {
     });
     
     // Update glyph displays
-    updateGlyphDisplays(results, canvasElement.width, canvasElement.height);
+    const display = window.videoDisplay;
+    updateGlyphDisplays(results, display.width, display.height);
   } else {
     statusElement.textContent = 'No hands detected. Show your hands to the camera.';
     
