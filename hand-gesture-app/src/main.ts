@@ -1,46 +1,14 @@
 /**
- * Hand Gesture Detection with MediaPipe Hands and Glyph Recognition
- * Detects hand gestures from camera input, draws skeleton wireframe overlay,
- * and displays recognized glyph symbols next to each hand.
- * 
- * Note: MediaPipe Hands is loaded via CDN script tag in index.html
- * The Hands class and HAND_CONNECTIONS are available as globals
+ * Hand, Face, and Pose Detection with MediaPipe Tasks Vision
+ * Detects hand gestures, face landmarks, and pose from camera input,
+ * draws skeleton wireframe overlays, and displays recognized glyph symbols next to each hand.
  */
 
-// Import gesture detection module
-import { 
-  detectGestures, 
-  generateGlyphSVG 
-} from './gestures';
+import { FilesetResolver, HolisticLandmarker, type HolisticLandmarkerResult } from '@mediapipe/tasks-vision';
+import { detectGestures, generateGlyphSVG } from './gestures';
+import type { GlyphType, CircleVariant, DetectedGlyph, NormalizedLandmark } from './gestures';
 
-import type { 
-  GlyphType,
-  CircleVariant,
-  DetectedGlyph 
-} from './gestures';
-
-// Declare the global Hands class and HAND_CONNECTIONS from MediaPipe
-interface NormalizedLandmark {
-  x: number;
-  y: number;
-  z: number;
-  visibility?: number;
-}
-
-interface Handedness {
-  index: number;
-  score: number;
-  label: 'Right' | 'Left';
-}
-
-interface Results {
-  multiHandLandmarks: NormalizedLandmark[][];
-  multiHandWorldLandmarks: any[][];
-  multiHandedness: Handedness[];
-  image: HTMLCanvasElement | HTMLImageElement | ImageBitmap;
-}
-
-// Extend Window interface for our video display properties
+// Extend Window interface for video display properties
 declare global {
   interface Window {
     videoDisplay: {
@@ -54,37 +22,14 @@ declare global {
   }
 }
 
-interface HandsInterface {
-  close(): Promise<void>;
-  onResults(listener: (results: Results) => void): void;
-  initialize(): Promise<void>;
-  reset(): void;
-  send(inputs: { image: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement }): Promise<void>;
-  setOptions(options: {
-    maxNumHands?: number;
-    modelComplexity?: 0 | 1;
-    minDetectionConfidence?: number;
-    minTrackingConfidence?: number;
-    selfieMode?: boolean;
-  }): void;
-}
-
-// Extend Window interface to include MediaPipe Hands
-declare global {
-  interface Window {
-    Hands: new (config?: { locateFile?: (path: string, prefix?: string) => string }) => HandsInterface;
-    HAND_CONNECTIONS: [number, number][];
-    VERSION: string;
-  }
-}
-
 // DOM Elements
 const videoElement = document.getElementById('video') as HTMLVideoElement;
 const canvasElement = document.getElementById('canvas') as HTMLCanvasElement;
 const statusElement = document.getElementById('status') as HTMLElement;
 const infoElement = document.getElementById('info') as HTMLElement;
+const videoContainer = document.getElementById('video-container') as HTMLElement;
 
-// Create a container for glyph overlays
+// Glyph container
 const glyphContainer = document.createElement('div');
 glyphContainer.id = 'glyph-container';
 glyphContainer.style.position = 'absolute';
@@ -94,179 +39,117 @@ glyphContainer.style.width = '100%';
 glyphContainer.style.height = '100%';
 glyphContainer.style.pointerEvents = 'none';
 glyphContainer.style.zIndex = '10';
+videoContainer.appendChild(glyphContainer);
 
-// Add glyph container to video container
-const videoContainer = document.getElementById('video-container');
-videoContainer?.appendChild(glyphContainer);
-
-// Canvas context
 const canvasCtx = canvasElement.getContext('2d')!;
 
-// Hand detection instance
-let hands: HandsInterface | null = null;
+// Holistic landmarker instance
+let holistic: HolisticLandmarker | null = null;
 
-// Store glyph elements for cleanup
+// Glyph elements tracking
 const glyphElements: { element: HTMLElement; handIndex: number }[] = [];
 
-// Default hand connections (fallback in case global not loaded)
-const DEFAULT_HAND_CONNECTIONS: [number, number][] = [
-  [0, 1], [1, 2], [2, 3], [3, 4],
-  [0, 5], [5, 6], [6, 7], [7, 8],
-  [5, 9], [9, 10], [10, 11], [11, 12],
-  [9, 13], [13, 14], [14, 15], [15, 16],
-  [13, 17], [0, 17], [17, 18], [18, 19], [19, 20]
-];
-
-// Colors for different hands
+// Color constants
 const HAND_COLORS = ['#00FF88', '#FF6B6B', '#4ECDC4', '#FFE66D'];
 const POINT_COLOR = '#FFFFFF';
 const POINT_RADIUS = 3;
 const LINE_WIDTH = 2;
 
-// Glyph display settings
+const FACE_COLOR = '#4FC3F7';
+const POSE_COLOR = '#FFB74D';
+
 const GLYPH_SIZE = 80;
-const GLYPH_OFFSET_X = 100; // Distance from hand to glyph
-const GLYPH_OFFSET_Y = -50; // Vertical offset from hand center
+const GLYPH_OFFSET_X = 100;
+const GLYPH_OFFSET_Y = -50;
 
-/**
- * Wait for MediaPipe Hands library to be loaded
- */
-function waitForHands(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // Check if already loaded
-    if (window.Hands && window.HAND_CONNECTIONS) {
-      resolve();
-      return;
-    }
-
-    // Maximum wait time: 30 seconds
-    const startTime = Date.now();
-    const maxWait = 30000;
-
-    const check = () => {
-      if (window.Hands && window.HAND_CONNECTIONS) {
-        resolve();
-        return;
-      }
-
-      const elapsed = Date.now() - startTime;
-      if (elapsed > maxWait) {
-        reject(new Error('MediaPipe Hands library failed to load within 30 seconds'));
-        return;
-      }
-
-      setTimeout(check, 100);
-    };
-
-    check();
-  });
+// Connection conversion helper: MediaPipe connections are objects { start, end }
+type Connection = { start: number; end: number };
+function toTupleArray(connections: readonly Connection[]): [number, number][] {
+  return connections.map(c => [c.start, c.end]);
 }
 
-/**
- * Initialize the camera stream
- */
-async function initializeCamera(): Promise<boolean> {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'user',
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      },
-      audio: false
-    });
-    
-    videoElement.srcObject = stream;
-    statusElement.textContent = 'Camera ready. Loading hand detection...';
-    
-    // Wait for video to start playing
-    await new Promise((resolve) => {
-      videoElement.onloadedmetadata = resolve;
-    });
-    
-    return true;
-  } catch (error) {
-    console.error('Error accessing camera:', error);
-    statusElement.textContent = 'Error: Could not access camera. Please check permissions.';
-    return false;
-  }
-}
+// Pre-converted connection arrays (as [number, number][])
+const HAND_CONNECTIONS = toTupleArray(HolisticLandmarker.HAND_CONNECTIONS);
+const POSE_CONNECTIONS = toTupleArray(HolisticLandmarker.POSE_CONNECTIONS);
+const FACE_OVAL_CONNECTIONS = toTupleArray(HolisticLandmarker.FACE_LANDMARKS_FACE_OVAL);
+const FACE_LIPS_CONNECTIONS = toTupleArray(HolisticLandmarker.FACE_LANDMARKS_LIPS);
+const FACE_LEFT_EYE_CONNECTIONS = toTupleArray(HolisticLandmarker.FACE_LANDMARKS_LEFT_EYE);
+const FACE_RIGHT_EYE_CONNECTIONS = toTupleArray(HolisticLandmarker.FACE_LANDMARKS_RIGHT_EYE);
+const FACE_LEFT_EYEBROW_CONNECTIONS = toTupleArray(HolisticLandmarker.FACE_LANDMARKS_LEFT_EYEBROW);
+const FACE_RIGHT_EYEBROW_CONNECTIONS = toTupleArray(HolisticLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW);
 
-/**
- * Draw a single hand's landmarks and connections
- */
-function drawHand(landmarks: NormalizedLandmark[], color: string, connections: [number, number][]): void {
-  if (!landmarks || landmarks.length === 0) return;
+// Drawing helpers
+function drawConnections(
+  landmarks: NormalizedLandmark[],
+  connections: [number, number][],
+  color: string
+): void {
+  const display = window.videoDisplay!;
+  if (!landmarks || landmarks.length === 0 || !display) return;
 
-  // Draw connections
   connections.forEach(([start, end]) => {
-    const startLandmark = landmarks[start];
-    const endLandmark = landmarks[end];
-    
-    if (startLandmark && endLandmark) {
-      const display = window.videoDisplay;
+    const startLm = landmarks[start];
+    const endLm = landmarks[end];
+    if (startLm && endLm) {
       canvasCtx.beginPath();
       canvasCtx.moveTo(
-        display.offsetX + startLandmark.x * display.width,
-        display.offsetY + startLandmark.y * display.height
+        display.offsetX + startLm.x * display.width,
+        display.offsetY + startLm.y * display.height
       );
       canvasCtx.lineTo(
-        display.offsetX + endLandmark.x * display.width,
-        display.offsetY + endLandmark.y * display.height
+        display.offsetX + endLm.x * display.width,
+        display.offsetY + endLm.y * display.height
       );
       canvasCtx.strokeStyle = color;
       canvasCtx.lineWidth = LINE_WIDTH;
       canvasCtx.stroke();
     }
   });
+}
 
-  // Draw landmarks (points)
-  landmarks.forEach((landmark) => {
-    const display = window.videoDisplay;
+function drawPoints(landmarks: NormalizedLandmark[], color: string, radius: number = POINT_RADIUS): void {
+  const display = window.videoDisplay!;
+  if (!landmarks || !display) return;
+
+  landmarks.forEach(lm => {
     canvasCtx.beginPath();
     canvasCtx.arc(
-      display.offsetX + landmark.x * display.width,
-      display.offsetY + landmark.y * display.height,
-      POINT_RADIUS,
+      display.offsetX + lm.x * display.width,
+      display.offsetY + lm.y * display.height,
+      radius,
       0,
       2 * Math.PI
     );
-    canvasCtx.fillStyle = POINT_COLOR;
+    canvasCtx.fillStyle = color;
     canvasCtx.fill();
   });
 }
 
-/**
- * Calculate the center position of a hand from its landmarks
- */
+function drawSkeleton(
+  landmarks: NormalizedLandmark[],
+  connections: [number, number][],
+  color: string
+): void {
+  drawConnections(landmarks, connections, color);
+  drawPoints(landmarks, POINT_COLOR, POINT_RADIUS);
+}
+
 function getHandCenter(landmarks: NormalizedLandmark[]): { x: number; y: number } {
-  // Use palm landmarks for center calculation
-  const palmLandmarks = landmarks.slice(0, 9); // Wrist + thumb base + finger bases
+  const palmLandmarks = landmarks.slice(0, 9);
   let sumX = 0, sumY = 0;
-  
   palmLandmarks.forEach(l => {
     sumX += l.x;
     sumY += l.y;
   });
-  
-  return {
-    x: sumX / palmLandmarks.length,
-    y: sumY / palmLandmarks.length
-  };
+  return { x: sumX / palmLandmarks.length, y: sumY / palmLandmarks.length };
 }
 
-/**
- * Create and position a glyph SVG element
- */
 function createGlyphElement(glyph: DetectedGlyph, handIndex: number, canvasWidth: number, canvasHeight: number): HTMLElement {
   const center = getHandCenter(glyph.landmarks);
-  
-  // Calculate glyph position (right of the hand for left hand, left for right hand)
   const isRightHand = glyph.hand === 'right';
-  const xPos = (center.x * canvasWidth) + (isRightHand ? -GLYPH_OFFSET_X : GLYPH_OFFSET_X);
-  const yPos = (center.y * canvasHeight) + GLYPH_OFFSET_Y;
-  
-  // Create container div
+  const xPos = center.x * canvasWidth + (isRightHand ? -GLYPH_OFFSET_X : GLYPH_OFFSET_X);
+  const yPos = center.y * canvasHeight + GLYPH_OFFSET_Y;
+
   const container = document.createElement('div');
   container.style.position = 'absolute';
   container.style.left = `${xPos}px`;
@@ -276,20 +159,17 @@ function createGlyphElement(glyph: DetectedGlyph, handIndex: number, canvasWidth
   container.style.pointerEvents = 'none';
   container.dataset.handIndex = handIndex.toString();
   container.dataset.hand = glyph.hand;
-  
-  // Create SVG element
+
   const svg = generateGlyphSVG(glyph.type, glyph.variant as CircleVariant);
   container.innerHTML = svg.svg;
-  
-  // Style the SVG
+
   const svgElement = container.querySelector('svg');
   if (svgElement) {
     svgElement.style.width = `${GLYPH_SIZE}px`;
     svgElement.style.height = `${GLYPH_SIZE}px`;
     svgElement.style.filter = 'drop-shadow(0 0 8px rgba(0, 255, 136, 0.7))';
   }
-  
-  // Add glyph name label
+
   const label = document.createElement('div');
   label.textContent = getGlyphLabel(glyph);
   label.style.position = 'absolute';
@@ -302,103 +182,75 @@ function createGlyphElement(glyph: DetectedGlyph, handIndex: number, canvasWidth
   label.style.textShadow = '0 0 4px rgba(0, 255, 136, 0.7)';
   label.style.whiteSpace = 'nowrap';
   container.appendChild(label);
-  
+
   return container;
 }
 
-/**
- * Get display label for a glyph
- */
 function getGlyphLabel(glyph: DetectedGlyph): string {
   let label = glyph.type.replace('_', ' ').toUpperCase();
-  
-  // Add variant info for circle
   if (glyph.type === 'circle' && glyph.variant) {
     label += ` (${glyph.variant.replace('_', ' ').toUpperCase()})`;
   }
-  
-  // Add hand info
   label += ` - ${glyph.hand.toUpperCase()}`;
-  
   return label;
 }
 
-/**
- * Update or create glyph display for detected gestures
- */
+// Update glyph displays for currently detected gestures
 function updateGlyphDisplays(
-  results: Results,
+  handLandmarks: NormalizedLandmark[][],
+  handedness: { index: number; score: number; label: 'Right' | 'Left' }[],
   canvasWidth: number,
   canvasHeight: number
 ): void {
   // Clear previous glyph elements
   glyphElements.forEach(({ element }) => {
-    if (element.parentNode) {
-      element.parentNode.removeChild(element);
-    }
+    if (element.parentNode) element.parentNode.removeChild(element);
   });
   glyphElements.length = 0;
 
-  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-    return;
-  }
-
-  const connections = window.HAND_CONNECTIONS || DEFAULT_HAND_CONNECTIONS;
+  if (handLandmarks.length === 0) return;
 
   // Detect gestures for all hands
-  const gestures = detectGestures(
-    results.multiHandLandmarks,
-    results.multiHandedness
-  );
+  const gestures = detectGestures(handLandmarks, handedness);
 
   // Create glyph elements for each detected gesture
-  gestures.forEach((gesture, handIndex) => {
-    const element = createGlyphElement(
-      gesture,
-      handIndex,
-      canvasWidth,
-      canvasHeight
-    );
-    glyphContainer.appendChild(element);
-    glyphElements.push({ element, handIndex });
+  gestures.forEach((gesture, idx) => {
+    const el = createGlyphElement(gesture, idx, canvasWidth, canvasHeight);
+    glyphContainer.appendChild(el);
+    glyphElements.push({ element: el, handIndex: idx });
   });
 }
 
-/**
- * Handle hand detection results
- */
-function onResults(results: Results): void {
-  // Calculate video display dimensions with object-fit: contain
+// Process holistic detection results
+function processResults(result: HolisticLandmarkerResult): void {
+  // Compute video display dimensions with object-fit: contain
   const videoAspectRatio = videoElement.videoWidth / videoElement.videoHeight;
   const containerWidth = videoElement.clientWidth;
   const containerHeight = videoElement.clientHeight;
-  
+
   let displayWidth, displayHeight, offsetX = 0, offsetY = 0;
-  
   if (containerWidth / containerHeight > videoAspectRatio) {
-    // Container is wider than video - fit to height
     displayHeight = containerHeight;
     displayWidth = containerHeight * videoAspectRatio;
     offsetX = (containerWidth - displayWidth) / 2;
   } else {
-    // Container is taller than video - fit to width
     displayWidth = containerWidth;
     displayHeight = containerWidth / videoAspectRatio;
     offsetY = (containerHeight - displayHeight) / 2;
   }
 
-  // Set canvas to match container size and position
+  // Resize canvas to match container
   canvasElement.width = containerWidth;
   canvasElement.height = containerHeight;
   canvasElement.style.width = `${containerWidth}px`;
   canvasElement.style.height = `${containerHeight}px`;
-  
+
   // Store scaling factors for landmark drawing
   window.videoDisplay = {
     width: displayWidth,
     height: displayHeight,
-    offsetX: offsetX,
-    offsetY: offsetY,
+    offsetX,
+    offsetY,
     scaleX: displayWidth / videoElement.videoWidth,
     scaleY: displayHeight / videoElement.videoHeight
   };
@@ -406,44 +258,87 @@ function onResults(results: Results): void {
   // Clear canvas
   canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-  const connections = window.HAND_CONNECTIONS || DEFAULT_HAND_CONNECTIONS;
+  // 1. Draw face (key contours)
+  if (result.faceLandmarks && result.faceLandmarks.length > 0) {
+    for (const face of result.faceLandmarks) {
+      drawConnections(face, FACE_OVAL_CONNECTIONS, FACE_COLOR);
+      drawConnections(face, FACE_LIPS_CONNECTIONS, FACE_COLOR);
+      drawConnections(face, FACE_LEFT_EYE_CONNECTIONS, FACE_COLOR);
+      drawConnections(face, FACE_RIGHT_EYE_CONNECTIONS, FACE_COLOR);
+      drawConnections(face, FACE_LEFT_EYEBROW_CONNECTIONS, FACE_COLOR);
+      drawConnections(face, FACE_RIGHT_EYEBROW_CONNECTIONS, FACE_COLOR);
+    }
+  }
 
-  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-    statusElement.textContent = `Detected ${results.multiHandLandmarks.length} hand(s)`;
-    
-    // Draw each detected hand
-    results.multiHandLandmarks.forEach((landmarks, handIndex) => {
-      const color = HAND_COLORS[handIndex % HAND_COLORS.length];
-      drawHand(landmarks, color, connections);
+  // 2. Draw pose skeleton
+  if (result.poseLandmarks && result.poseLandmarks.length > 0) {
+    for (const pose of result.poseLandmarks) {
+      drawSkeleton(pose, POSE_CONNECTIONS, POSE_COLOR);
+    }
+  }
+
+  // 3. Draw hands (combine left and right)
+  const allHandLandmarks: NormalizedLandmark[][] = [];
+  const allHandedness: { index: number; score: number; label: 'Right' | 'Left' }[] = [];
+
+  if (result.leftHandLandmarks) {
+    result.leftHandLandmarks.forEach(landmarks => {
+      allHandLandmarks.push(landmarks);
+      allHandedness.push({
+        index: allHandLandmarks.length - 1,
+        score: 0.9,
+        label: 'Left'
+      });
     });
-    
-    // Update glyph displays
-    const display = window.videoDisplay;
-    updateGlyphDisplays(results, display.width, display.height);
+  }
+
+  if (result.rightHandLandmarks) {
+    result.rightHandLandmarks.forEach(landmarks => {
+      allHandLandmarks.push(landmarks);
+      allHandedness.push({
+        index: allHandLandmarks.length - 1,
+        score: 0.9,
+        label: 'Right'
+      });
+    });
+  }
+
+  // Draw each hand with a distinct color
+  allHandLandmarks.forEach((landmarks, idx) => {
+    const color = HAND_COLORS[idx % HAND_COLORS.length];
+    drawSkeleton(landmarks, HAND_CONNECTIONS, color);
+  });
+
+  // Update status and glyph displays
+  if (allHandLandmarks.length > 0) {
+    statusElement.textContent = `Detected ${allHandLandmarks.length} hand(s)`;
+    updateGlyphDisplays(
+      allHandLandmarks,
+      allHandedness,
+      window.videoDisplay.width,
+      window.videoDisplay.height
+    );
   } else {
     statusElement.textContent = 'No hands detected. Show your hands to the camera.';
-    
-    // Clear glyph displays
+    // Clear glyphs
     glyphElements.forEach(({ element }) => {
-      if (element.parentNode) {
-        element.parentNode.removeChild(element);
-      }
+      if (element.parentNode) element.parentNode.removeChild(element);
     });
     glyphElements.length = 0;
   }
 }
 
-/**
- * Process video frame and detect hands
- */
-async function processFrame(): Promise<void> {
-  if (!hands || videoElement.readyState !== 4) {
+// Frame processing loop
+function processFrame(): void {
+  if (!holistic || videoElement.readyState !== 4) {
     requestAnimationFrame(processFrame);
     return;
   }
 
   try {
-    await hands.send({ image: videoElement });
+    const timestamp = performance.now();
+    const result = holistic.detectForVideo(videoElement, timestamp);
+    processResults(result);
   } catch (error) {
     console.error('Error processing frame:', error);
   }
@@ -451,77 +346,70 @@ async function processFrame(): Promise<void> {
   requestAnimationFrame(processFrame);
 }
 
-/**
- * Initialize the application
- */
-async function init(): Promise<void> {
-  // Wait for MediaPipe Hands to load
+// Initialize camera
+async function initializeCamera(): Promise<boolean> {
   try {
-    statusElement.textContent = 'Waiting for MediaPipe Hands library to load...';
-    await waitForHands();
-    statusElement.textContent = 'Library loaded. Initializing camera...';
-  } catch (error) {
-    console.error('Error:', error);
-    statusElement.textContent = 'Error: MediaPipe Hands library failed to load';
-    return;
-  }
-
-  // Check if Hands is available
-  if (typeof window.Hands !== 'function') {
-    statusElement.textContent = 'Error: MediaPipe Hands library not loaded';
-    console.error('MediaPipe Hands library not loaded. Check CDN script in index.html');
-    return;
-  }
-
-  // Initialize camera
-  const cameraReady = await initializeCamera();
-  if (!cameraReady) {
-    return;
-  }
-
-  // Initialize hands detection
-  try {
-    statusElement.textContent = 'Initializing hand detection model...';
-    
-    hands = new window.Hands({
-      locateFile: (file: string) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`;
-      }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'user',
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      },
+      audio: false
     });
-    
-    // Set options
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-      selfieMode: true
-    });
-    
-    // Register results listener
-    hands.onResults(onResults);
-    
-    // Initialize the hands detector
-    await hands.initialize();
-    
-    statusElement.textContent = 'Hand detection ready! Show your hands to the camera.';
-    infoElement.textContent = 'Hand Gesture Detection with MediaPipe Hands | Glyph Recognition Active';
+    videoElement.srcObject = stream;
+    statusElement.textContent = 'Camera ready. Loading detection models...';
+    await new Promise(resolve => { videoElement.onloadedmetadata = resolve; });
+    return true;
   } catch (error) {
-    console.error('Error initializing hands:', error);
-    statusElement.textContent = 'Error loading hand detection model. Check console.';
-    return;
+    console.error('Error accessing camera:', error);
+    statusElement.textContent = 'Error: Could not access camera. Please check permissions.';
+    return false;
   }
-
-  // Start processing frames
-  processFrame();
 }
 
-/**
- * Clean up resources
- */
+// Main initialization
+async function init(): Promise<void> {
+  // Initialize camera first
+  const cameraReady = await initializeCamera();
+  if (!cameraReady) return;
+
+  // Initialize holistic landmarker
+  try {
+    statusElement.textContent = 'Loading detection models...';
+
+    const wasmFileset = await FilesetResolver.forVisionTasks(
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm'
+    );
+
+    // Try GPU delegate first, fall back to CPU for mobile compatibility
+    try {
+      holistic = await HolisticLandmarker.createFromOptions(wasmFileset, {
+        baseOptions: { delegate: 'GPU' },
+        runningMode: 'VIDEO',
+      });
+    } catch {
+      statusElement.textContent = 'GPU not available, falling back to CPU...';
+      holistic = await HolisticLandmarker.createFromOptions(wasmFileset, {
+        baseOptions: { delegate: 'CPU' },
+        runningMode: 'VIDEO',
+      });
+    }
+
+    statusElement.textContent = 'Detection ready! Show your hands, face, and pose.';
+    infoElement.textContent = 'Hand/Face/Pose Detection with MediaPipe Tasks Vision | Glyph Recognition Active';
+    processFrame();
+  } catch (error) {
+    console.error('Error initializing detection:', error);
+    statusElement.textContent = 'Error: Could not load detection models. Make sure your browser supports WebAssembly.';
+    return;
+  }
+}
+
+// Cleanup
 async function cleanup(): Promise<void> {
-  if (hands) {
-    await hands.close();
+  if (holistic) {
+    await holistic.close();
   }
   if (videoElement.srcObject) {
     const stream = videoElement.srcObject as MediaStream;
@@ -529,19 +417,12 @@ async function cleanup(): Promise<void> {
   }
 }
 
-// Handle window unload
-window.addEventListener('beforeunload', () => {
-  cleanup().catch(console.error);
-});
-
-// Handle window resize
+window.addEventListener('beforeunload', () => cleanup().catch(console.error));
 window.addEventListener('resize', () => {
-  // Update glyph container size
   glyphContainer.style.width = `${window.innerWidth}px`;
   glyphContainer.style.height = `${window.innerHeight}px`;
 });
-
-// Initialize glyph container size
+// Set initial glyph container size
 glyphContainer.style.width = `${window.innerWidth}px`;
 glyphContainer.style.height = `${window.innerHeight}px`;
 
