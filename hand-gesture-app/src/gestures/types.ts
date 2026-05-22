@@ -31,41 +31,27 @@ export interface HandResult {
 }
 
 /**
- * Supported glyph/shape types
+ * Supported glyph/shape types.
+ *
+ * Simplified to the gesture set demonstrated in the reference photos:
+ * - star          : open hand, all fingers spread wide
+ * - filled_circle : closed fist
+ * - dash           : flat hand held sideways (all fingers extended, horizontal)
+ * - V              : index + middle extended (peace / victory sign)
+ * - unknown        : nothing matched
  */
-export type GlyphType = 
-  | 'circle'
+export type GlyphType =
+  | 'star'
   | 'filled_circle'
   | 'dash'
-  | 'slash'
-  | 'triangle'
-  | 'square'
-  | 'salmiakki'
-  | 'X'
-  | 'I'
   | 'V'
-  | 'heart'
-  | 'star'
-  | 'checkmark'
-  | 'peace'
   | 'unknown';
-
-/**
- * Circle shape variants based on thumb connection
- */
-export type CircleVariant = 
-  | 'thumb_index'
-  | 'thumb_middle'
-  | 'thumb_ring'
-  | 'thumb_pinky'
-  | 'thumb_none';
 
 /**
  * Detected glyph with metadata
  */
 export interface DetectedGlyph {
   type: GlyphType;
-  variant?: CircleVariant; // Only for circle shapes
   hand: 'left' | 'right' | 'unknown';
   confidence: number; // 0-1 confidence score
   landmarks: NormalizedLandmark[]; // The landmarks used for detection

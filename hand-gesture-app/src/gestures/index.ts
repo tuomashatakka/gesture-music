@@ -1,40 +1,36 @@
 /**
  * Hand Gesture to Glyph Conversion Module
- * 
- * This module provides functionality to:
- * - Detect hand gestures from MediaPipe Hands landmarks
- * - Convert detected gestures to glyph representations
- * - Generate SVG icons for each glyph type
- * - Differentiate circle shapes based on thumb-finger connection and hand
- * 
- * Supported glyphs:
- * - circle (with variants: thumb_index, thumb_middle, thumb_ring, thumb_pinky)
- * - filled_circle (fist)
- * - dash (horizontal line)
- * - slash (diagonal line)
- * - triangle
- * - square
- * - salmiakki (Scandinavian candy symbol)
- * - X (cross)
- * - I (single vertical line)
- * - V
+ *
+ * Detects a small set of hand gestures from MediaPipe Holistic landmarks
+ * and converts them to glyph representations.
+ *
+ * Supported glyphs (matching the reference photos):
+ * - star          (open hand, spread wide)
+ * - filled_circle (closed fist)
+ * - dash          (flat hand held sideways)
+ * - V             (index + middle extended)
+ * - unknown       (no match)
  */
 
-export type { 
-  NormalizedLandmark, 
-  Handedness, 
-  GlyphType, 
-  CircleVariant,
+export type {
+  NormalizedLandmark,
+  Handedness,
+  GlyphType,
   DetectedGlyph,
   GlyphSVG,
   HandResult,
   CheckResult
 } from './types';
 
-export { 
+export {
   FingerIndices,
   PalmIndices
 } from './types';
 
 export { detectGesture, detectGestures, runAllChecks } from './gestureDetector';
-export { generateGlyphSVG, getGlyphDataURL, createGlyphSVGElement } from './svgGenerator';
+export {
+  generateGlyphSVG,
+  generateGlyphSymbolMarkup,
+  getGlyphDataURL,
+  createGlyphSVGElement
+} from './svgGenerator';

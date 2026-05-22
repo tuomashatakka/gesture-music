@@ -1,0 +1,14 @@
+{
+  "name": "gesture-music",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "lint": "pnpx eslint hand-gesture-app"
+  },
+  "devDependencies": {
+    "@tuomashatakka/eslint-config": "^3.2.2",
+    "eslint": "^9.39.4",
+    "typescript": "^6.0.2"
+  }
+}
