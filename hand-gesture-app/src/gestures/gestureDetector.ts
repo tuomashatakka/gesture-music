@@ -8,7 +8,8 @@ import type {
   Handedness, 
   CircleVariant, 
   DetectedGlyph,
-  GlyphType
+  GlyphType,
+  CheckResult
 } from './types';
 import { 
   FingerIndices,
@@ -807,4 +808,31 @@ export function detectGestures(
     const handedness = allHandedness[index];
     return detectGesture(landmarks, handedness);
   });
+}
+
+/**
+ * Run all gesture check functions and return their results
+ */
+export function runAllChecks(landmarks: NormalizedLandmark[]): CheckResult[] {
+  const checks: Array<{ name: string; fn: (l: NormalizedLandmark[]) => boolean }> = [
+    { name: 'isFist', fn: isFist },
+    { name: 'isCircle', fn: (l) => isCircle(l).isCircle },
+    { name: 'isV', fn: isV },
+    { name: 'isI', fn: isI },
+    { name: 'isX', fn: isX },
+    { name: 'isSalmiakki', fn: isSalmiakki },
+    { name: 'isTriangle', fn: isTriangle },
+    { name: 'isSquare', fn: isSquare },
+    { name: 'isSlash', fn: isSlash },
+    { name: 'isDash', fn: isDash },
+    { name: 'isHeart', fn: isHeart },
+    { name: 'isStar', fn: isStar },
+    { name: 'isCheckmark', fn: isCheckmark },
+    { name: 'isPeace', fn: isPeace },
+  ];
+
+  return checks.map(check => ({
+    name: check.name,
+    passed: check.fn(landmarks),
+  }));
 }

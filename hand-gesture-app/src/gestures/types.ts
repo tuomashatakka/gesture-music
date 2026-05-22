@@ -113,3 +113,11 @@ export const PalmIndices = {
   ringBase: 13,
   pinkyBase: 17
 } as const;
+
+/**
+ * Result of an individual gesture check
+ */
+export interface CheckResult {
+  name: string;
+  passed: boolean;
+}

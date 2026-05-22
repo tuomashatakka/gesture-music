@@ -27,7 +27,8 @@ export type {
   CircleVariant,
   DetectedGlyph,
   GlyphSVG,
-  HandResult
+  HandResult,
+  CheckResult
 } from './types';
 
 export { 
@@ -35,5 +36,5 @@ export {
   PalmIndices
 } from './types';
 
-export { detectGesture, detectGestures } from './gestureDetector';
+export { detectGesture, detectGestures, runAllChecks } from './gestureDetector';
 export { generateGlyphSVG, getGlyphDataURL, createGlyphSVGElement } from './svgGenerator';

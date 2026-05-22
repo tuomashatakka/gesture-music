@@ -5,8 +5,8 @@
  */
 
 import { FilesetResolver, HolisticLandmarker, type HolisticLandmarkerResult } from '@mediapipe/tasks-vision';
-import { detectGestures, generateGlyphSVG } from './gestures';
-import type { GlyphType, CircleVariant, DetectedGlyph, NormalizedLandmark } from './gestures';
+import { detectGesture, detectGestures, generateGlyphSVG, runAllChecks } from './gestures';
+import type { GlyphType, CircleVariant, DetectedGlyph, NormalizedLandmark, CheckResult, Handedness } from './gestures';
 
 // Extend Window interface for video display properties
 declare global {
@@ -41,10 +41,67 @@ glyphContainer.style.pointerEvents = 'none';
 glyphContainer.style.zIndex = '10';
 videoContainer.appendChild(glyphContainer);
 
+// Debug overlay toggle key (press D)
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'd' || e.key === 'D') {
+    toggleDebug();
+  }
+});
+
 const canvasCtx = canvasElement.getContext('2d')!;
 
 // Holistic landmarker instance
 let holistic: HolisticLandmarker | null = null;
+
+// Debug overlay
+let debugVisible = false;
+const debugOverlay = document.createElement('div');
+debugOverlay.id = 'debug-overlay';
+debugOverlay.style.cssText = `
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  background: rgba(0,0,0,0.85);
+  color: #fff;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  z-index: 1000;
+  max-height: 80vh;
+  overflow-y: auto;
+  display: none;
+  min-width: 200px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+`;
+document.body.appendChild(debugOverlay);
+
+// Debug toggle button
+const debugButton = document.createElement('button');
+debugButton.id = 'debug-toggle';
+debugButton.textContent = 'Debug';
+debugButton.style.cssText = `
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  padding: 8px 12px;
+  background: rgba(60,60,60,0.9);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  z-index: 1000;
+  font-family: sans-serif;
+  font-size: 14px;
+`;
+debugButton.addEventListener('click', toggleDebug);
+document.body.appendChild(debugButton);
+
+function toggleDebug(): void {
+  debugVisible = !debugVisible;
+  debugOverlay.style.display = debugVisible ? 'block' : 'none';
+  debugButton.textContent = debugVisible ? 'Hide Debug' : 'Show Debug';
+}
 
 // Glyph elements tracking
 const glyphElements: { element: HTMLElement; handIndex: number }[] = [];
@@ -150,13 +207,14 @@ function createGlyphElement(glyph: DetectedGlyph, handIndex: number, canvasWidth
   const xPos = center.x * canvasWidth + (isRightHand ? -GLYPH_OFFSET_X : GLYPH_OFFSET_X);
   const yPos = center.y * canvasHeight + GLYPH_OFFSET_Y;
 
-  const container = document.createElement('div');
+   const container = document.createElement('div');
   container.style.position = 'absolute';
   container.style.left = `${xPos}px`;
   container.style.top = `${yPos}px`;
   container.style.transform = 'translate(-50%, -50%)';
   container.style.zIndex = '10';
   container.style.pointerEvents = 'none';
+  container.style.transition = 'all 20ms ease-out';
   container.dataset.handIndex = handIndex.toString();
   container.dataset.hand = glyph.hand;
 
@@ -219,6 +277,33 @@ function updateGlyphDisplays(
     glyphContainer.appendChild(el);
     glyphElements.push({ element: el, handIndex: idx });
   });
+}
+
+// Update debug overlay with gesture check results
+function updateDebugOverlay(landmarks: NormalizedLandmark[] | null): void {
+  if (!debugVisible) return;
+
+  if (!landmarks) {
+    debugOverlay.innerHTML = '<div>No hand detected</div>';
+    return;
+  }
+
+  const checks = runAllChecks(landmarks);
+  const gesture = detectGesture(landmarks, { label: 'Right', score: 1, index: 0 }); // handedness not critical for debug
+
+  let html = `<div style="margin-bottom:8px;font-weight:bold;color:#4fc3f7;">Detected: ${gesture.type}${gesture.variant ? ` + ${gesture.variant}` : ''}</div>`;
+  html += `<div style="margin-bottom:8px;font-size:11px;color:#aaa;">Confidence: ${(gesture.confidence * 100).toFixed(0)}%</div>`;
+  html += '<div style="margin-bottom:4px;font-size:11px;color:#aaa;">Checks:</div>';
+
+  for (const check of checks) {
+    const color = check.passed ? '#4caf50' : '#f44336';
+    html += `<div style="padding:2px 0;display:flex;justify-content:space-between;">
+      <span>${check.name}</span>
+      <span style="color:${color}">${check.passed ? '✓' : '✗'}</span>
+    </div>`;
+  }
+
+  debugOverlay.innerHTML = html;
 }
 
 // Process holistic detection results
@@ -318,6 +403,7 @@ function processResults(result: HolisticLandmarkerResult): void {
       window.videoDisplay.width,
       window.videoDisplay.height
     );
+    updateDebugOverlay(allHandLandmarks[0]);
   } else {
     statusElement.textContent = 'No hands detected. Show your hands to the camera.';
     // Clear glyphs
@@ -325,6 +411,7 @@ function processResults(result: HolisticLandmarkerResult): void {
       if (element.parentNode) element.parentNode.removeChild(element);
     });
     glyphElements.length = 0;
+    updateDebugOverlay(null);
   }
 }
 
@@ -382,16 +469,18 @@ async function init(): Promise<void> {
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm'
     );
 
+    const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/latest/holistic_landmarker.task';
+
     // Try GPU delegate first, fall back to CPU for mobile compatibility
     try {
       holistic = await HolisticLandmarker.createFromOptions(wasmFileset, {
-        baseOptions: { delegate: 'GPU' },
+        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
         runningMode: 'VIDEO',
       });
     } catch {
       statusElement.textContent = 'GPU not available, falling back to CPU...';
       holistic = await HolisticLandmarker.createFromOptions(wasmFileset, {
-        baseOptions: { delegate: 'CPU' },
+        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
         runningMode: 'VIDEO',
       });
     }
