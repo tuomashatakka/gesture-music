@@ -20,19 +20,20 @@
  * - V
  */
 
-export { 
+export type { 
   NormalizedLandmark, 
   Handedness, 
   GlyphType, 
   CircleVariant,
   DetectedGlyph,
   GlyphSVG,
+  HandResult
+} from './types';
+
+export { 
   FingerIndices,
   PalmIndices
 } from './types';
 
 export { detectGesture, detectGestures } from './gestureDetector';
 export { generateGlyphSVG, getGlyphDataURL, createGlyphSVGElement } from './svgGenerator';
-
-// Re-export types for convenience
-export type { HandResult } from './types';

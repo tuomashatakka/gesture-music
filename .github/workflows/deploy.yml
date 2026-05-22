@@ -25,21 +25,20 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
-
-      - name: Install pnpm
-        run: npm install -g pnpm
+          cache: npm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm install
+        working-directory: hand-gesture-app
 
       - name: Build project
-        run: pnpm build
+        run: npm run build
+        working-directory: hand-gesture-app
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: hand-gesture-app/dist
 
   deploy:
     needs: build

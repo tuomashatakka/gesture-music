@@ -10,7 +10,10 @@
 // Import gesture detection module
 import { 
   detectGestures, 
-  generateGlyphSVG, 
+  generateGlyphSVG 
+} from './gestures';
+
+import type { 
   GlyphType,
   CircleVariant,
   DetectedGlyph 

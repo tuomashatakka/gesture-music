@@ -3,7 +3,7 @@
  * Generates SVG representations of detected hand shapes
  */
 
-import { GlyphType, CircleVariant, GlyphSVG } from './types';
+import type { GlyphType, CircleVariant, GlyphSVG } from './types';
 
 const SVG_SIZE = 100;
 const STROKE_WIDTH = 8;
@@ -175,6 +175,63 @@ function generateVSVG(): GlyphSVG {
 }
 
 /**
+ * Generate SVG for heart glyph
+ */
+function generateHeartSVG(): GlyphSVG {
+  return {
+    svg: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <path d="M 50 30 C 30 10, 15 25, 25 45 C 20 60, 40 75, 50 85 C 60 75, 80 60, 75 45 C 85 25, 70 10, 50 30 Z" fill="none" stroke="${STROKE_COLOR}" stroke-width="${STROKE_WIDTH}" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`,
+    width: SVG_SIZE,
+    height: SVG_SIZE,
+    viewBox: '0 0 100 100'
+  };
+}
+
+/**
+ * Generate SVG for star glyph
+ */
+function generateStarSVG(): GlyphSVG {
+  return {
+    svg: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <path d="M 50 10 L 61 39 L 90 39 L 68 59 L 79 88 L 50 70 L 21 88 L 32 59 L 10 39 L 39 39 Z" fill="none" stroke="${STROKE_COLOR}" stroke-width="${STROKE_WIDTH}" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`,
+    width: SVG_SIZE,
+    height: SVG_SIZE,
+    viewBox: '0 0 100 100'
+  };
+}
+
+/**
+ * Generate SVG for checkmark glyph
+ */
+function generateCheckmarkSVG(): GlyphSVG {
+  return {
+    svg: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <path d="M 20 50 L 40 70 L 80 30" fill="none" stroke="${STROKE_COLOR}" stroke-width="${STROKE_WIDTH}" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`,
+    width: SVG_SIZE,
+    height: SVG_SIZE,
+    viewBox: '0 0 100 100'
+  };
+}
+
+/**
+ * Generate SVG for peace glyph
+ */
+function generatePeaceSVG(): GlyphSVG {
+  return {
+    svg: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <line x1="30" y1="20" x2="30" y2="80" stroke="${STROKE_COLOR}" stroke-width="${STROKE_WIDTH}" stroke-linecap="round"/>
+  <line x1="70" y1="20" x2="70" y2="80" stroke="${STROKE_COLOR}" stroke-width="${STROKE_WIDTH}" stroke-linecap="round"/>
+</svg>`,
+    width: SVG_SIZE,
+    height: SVG_SIZE,
+    viewBox: '0 0 100 100'
+  };
+}
+
+/**
  * Generate SVG for unknown glyph (question mark)
  */
 function generateUnknownSVG(): GlyphSVG {
@@ -213,6 +270,14 @@ export function generateGlyphSVG(type: GlyphType, variant?: CircleVariant): Glyp
       return generateISVG();
     case 'V':
       return generateVSVG();
+    case 'heart':
+      return generateHeartSVG();
+    case 'star':
+      return generateStarSVG();
+    case 'checkmark':
+      return generateCheckmarkSVG();
+    case 'peace':
+      return generatePeaceSVG();
     case 'unknown':
     default:
       return generateUnknownSVG();

@@ -44,6 +44,10 @@ export type GlyphType =
   | 'X'
   | 'I'
   | 'V'
+  | 'heart'
+  | 'star'
+  | 'checkmark'
+  | 'peace'
   | 'unknown';
 
 /**
@@ -93,9 +97,10 @@ export const FingerIndices = {
   index: { base: 5, tip: 8 },
   middle: { base: 9, tip: 12 },
   ring: { base: 13, tip: 16 },
-  pinky: { base: 17, tip: 20 },
-  wrist: 0
+  pinky: { base: 17, tip: 20 }
 } as const;
+
+export const WristIndex = 0 as const;
 
 /**
  * Palm landmarks
