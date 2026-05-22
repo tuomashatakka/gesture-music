@@ -1,13 +1,20 @@
 /**
  * Hand Gesture Detector
  *
- * Simplified to the four gestures shown in the reference photos:
- *   - star          : open hand, all five fingers spread wide
- *   - filled_circle : closed fist
- *   - dash          : flat hand held sideways (fingers extended, horizontal spread)
- *   - V             : index + middle extended (peace / victory)
+ * Detects a small set of gestures (matching the reference photos) plus a
+ * refining sub-gesture for each:
  *
- * Everything else falls through to `unknown`.
+ *   - palm   : open hand, all fingers extended, pointing roughly up
+ *   - fist   : closed hand            -> sub = set of fingers kept straight
+ *   - circle : thumb touching a finger -> sub = which finger (OK sign)
+ *   - V      : index + middle extended -> sub = palm side vs back of hand
+ *   - dash   : open hand slashing sideways -> sub = pointing direction (octant)
+ *
+ * Detection is orientation-independent: instead of relying on absolute joint
+ * angles, fingers are judged "extended" when the fingertip is farther from the
+ * wrist than the knuckle is. This works regardless of which way the hand
+ * points, which is why the previous angle-only version mis-read the reference
+ * photos as unknown.
  */
 
 import type {
@@ -22,141 +29,150 @@ import {
   PalmIndices
 } from './types'
 
-// Thresholds for gesture detection
-const FINGER_EXTENDED_ANGLE = 130 // Degrees - finger is extended if angle > this
-const FINGER_FOLDED_ANGLE   = 70 // Degrees - finger is folded if angle < this
+type Finger = keyof typeof FingerIndices
+const NON_THUMB: Finger[] = [ 'index', 'middle', 'ring', 'pinky' ]
+const ALL_FINGERS: Finger[] = [ 'thumb', 'index', 'middle', 'ring', 'pinky' ]
 
-/**
- * Calculate Euclidean (3D) distance between two landmarks
- */
-function distance (l1: NormalizedLandmark, l2: NormalizedLandmark): number {
-  const dx = l2.x - l1.x
-  const dy = l2.y - l1.y
-  const dz = l2.z - l1.z
+// ---------------------------------------------------------------------------
+// Geometry helpers
+// ---------------------------------------------------------------------------
+function dist3 (a: NormalizedLandmark, b: NormalizedLandmark): number {
+  const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z
   return Math.sqrt(dx * dx + dy * dy + dz * dz)
 }
 
-/**
- * Calculate angle between three points (in degrees). p2 is the vertex.
- */
-function angle (p1: NormalizedLandmark, p2: NormalizedLandmark, p3: NormalizedLandmark): number {
-  const v1 = { x: p1.x - p2.x, y: p1.y - p2.y }
-  const v2 = { x: p3.x - p2.x, y: p3.y - p2.y }
-
-  const dot  = v1.x * v2.x + v1.y * v2.y
-  const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y)
-  const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y)
-
-  const cosTheta = dot / (mag1 * mag2)
-  return Math.acos(Math.max(-1, Math.min(1, cosTheta))) * (180 / Math.PI)
+/** Overall hand scale: wrist -> middle-finger knuckle. Normalises thresholds. */
+function handScale (landmarks: NormalizedLandmark[]): number {
+  const s = dist3(landmarks[PalmIndices.wrist], landmarks[FingerIndices.middle.base])
+  return s > 1e-4 ? s : 1e-4
 }
 
 /**
- * Joint angle for a finger (base -> first knuckle -> tip).
+ * A non-thumb finger is extended when its tip sits clearly farther from the
+ * wrist than its first knuckle (base+1 / PIP joint).
  */
-function fingerJointAngle (landmarks: NormalizedLandmark[], finger: keyof typeof FingerIndices): number {
-  const indices = FingerIndices[finger]
-  const base    = landmarks[indices.base]
-  const mid1    = landmarks[indices.base + 1]
-  const tip     = landmarks[indices.tip]
-  return angle(base, mid1, tip)
+function isFingerExtended (landmarks: NormalizedLandmark[], finger: Finger, scale: number): boolean {
+  if (finger === 'thumb')
+    return isThumbExtended(landmarks, scale)
+  const idx   = FingerIndices[finger]
+  const wrist = landmarks[PalmIndices.wrist]
+  const tip   = landmarks[idx.tip]
+  const pip   = landmarks[idx.base + 1]
+  return dist3(tip, wrist) > dist3(pip, wrist) + 0.10 * scale
 }
 
-/** Check if a finger is extended (straight). */
-function isFingerExtended (landmarks: NormalizedLandmark[], finger: keyof typeof FingerIndices): boolean {
-  return fingerJointAngle(landmarks, finger) > FINGER_EXTENDED_ANGLE
-}
-
-/** Check if a finger is folded (bent toward palm). */
-function isFingerFolded (landmarks: NormalizedLandmark[], finger: keyof typeof FingerIndices): boolean {
-  return fingerJointAngle(landmarks, finger) < FINGER_FOLDED_ANGLE
-}
-
-/**
- * Closed fist -> filled circle.
- * All four fingers folded, no fingers extended, thumb tucked toward its base.
- */
-function isFist (landmarks: NormalizedLandmark[]): boolean {
-  const fingers: (keyof typeof FingerIndices)[] = [ 'index', 'middle', 'ring', 'pinky' ]
-
-  const allFingersFolded  = fingers.every(finger => isFingerFolded(landmarks, finger))
-  const noFingersExtended = fingers.every(finger => !isFingerExtended(landmarks, finger))
-
-  const thumbTip    = landmarks[FingerIndices.thumb.tip]
-  const thumbBase   = landmarks[FingerIndices.thumb.base]
-  const thumbFolded = distance(thumbTip, thumbBase) < 0.15
-
-  return allFingersFolded && noFingersExtended && thumbFolded
-}
-
-/**
- * Open hand, fingers spread wide -> star.
- * All five fingers extended and horizontally spread apart.
- */
-function isStar (landmarks: NormalizedLandmark[]): boolean {
-  const fingers: (keyof typeof FingerIndices)[] = [ 'thumb', 'index', 'middle', 'ring', 'pinky' ]
-
-  const allExtended = fingers.every(finger => isFingerExtended(landmarks, finger))
-
-  if (!allExtended)
-    return false
-
-  const indexTip = landmarks[FingerIndices.index.tip]
-  const pinkyTip = landmarks[FingerIndices.pinky.tip]
+/** Thumb extended when its tip is splayed away from the palm. */
+function isThumbExtended (landmarks: NormalizedLandmark[], scale: number): boolean {
   const thumbTip = landmarks[FingerIndices.thumb.tip]
+  const indexMcp = landmarks[FingerIndices.index.base]
+  const pinkyMcp = landmarks[FingerIndices.pinky.base]
+  return dist3(thumbTip, indexMcp) > 0.7 * scale && dist3(thumbTip, pinkyMcp) > 0.6 * scale
+}
 
-  const fingerSpread = Math.abs(indexTip.x - pinkyTip.x)
-  const thumbSpread  = Math.abs(thumbTip.x - indexTip.x)
+function extendedSet (landmarks: NormalizedLandmark[], scale: number): Record<Finger, boolean> {
+  return {
+    thumb:  isFingerExtended(landmarks, 'thumb', scale),
+    index:  isFingerExtended(landmarks, 'index', scale),
+    middle: isFingerExtended(landmarks, 'middle', scale),
+    ring:   isFingerExtended(landmarks, 'ring', scale),
+    pinky:  isFingerExtended(landmarks, 'pinky', scale)
+  }
+}
 
-  return fingerSpread > 0.25 && thumbSpread > 0.15
+// ---------------------------------------------------------------------------
+// Sub-gesture helpers
+// ---------------------------------------------------------------------------
+
+/** Which finger (if any) the thumb tip is touching. */
+function thumbTouchingFinger (landmarks: NormalizedLandmark[], scale: number): Finger | null {
+  const thumbTip = landmarks[FingerIndices.thumb.tip]
+  let best: Finger | null = null
+  let bestDist = 0.55 * scale
+  for (const finger of NON_THUMB) {
+    const d = dist3(thumbTip, landmarks[FingerIndices[finger].tip])
+    if (d < bestDist) {
+      bestDist = d
+      best     = finger
+    }
+  }
+  return best
+}
+
+const OCTANTS = [
+  { tok: 'N',  arrow: '\u2191' },
+  { tok: 'NE', arrow: '\u2197' },
+  { tok: 'E',  arrow: '\u2192' },
+  { tok: 'SE', arrow: '\u2198' },
+  { tok: 'S',  arrow: '\u2193' },
+  { tok: 'SW', arrow: '\u2199' },
+  { tok: 'W',  arrow: '\u2190' },
+  { tok: 'NW', arrow: '\u2196' }
+]
+
+/**
+ * Pointing direction of the hand (wrist -> middle fingertip), quantised into 8
+ * compass octants. `mirror` flips x so the direction matches the mirrored
+ * on-screen preview.
+ */
+function pointingOctant (landmarks: NormalizedLandmark[], mirror: boolean): { tok: string; label: string; deg: number } {
+  const wrist = landmarks[PalmIndices.wrist]
+  const tip   = landmarks[FingerIndices.middle.tip]
+  const dx    = (tip.x - wrist.x) * (mirror ? -1 : 1)
+  const dy    = tip.y - wrist.y
+  let deg     = Math.atan2(dx, -dy) * (180 / Math.PI)
+  if (deg < 0)
+    deg += 360
+  const sector = Math.round(deg / 45) % 8
+  const o      = OCTANTS[sector]
+  return { tok: o.tok, label: `${o.arrow} ${o.tok}  (${Math.round(deg)}\u00b0)`, deg }
+}
+
+/** Angle of the pointing vector away from straight-up, in degrees. */
+function tiltFromVertical (landmarks: NormalizedLandmark[]): number {
+  const wrist = landmarks[PalmIndices.wrist]
+  const tip   = landmarks[FingerIndices.middle.tip]
+  const dx    = tip.x - wrist.x
+  const dy    = tip.y - wrist.y
+  return Math.abs(Math.atan2(dx, -dy) * (180 / Math.PI))
 }
 
 /**
- * Flat hand held sideways -> dash.
- * All four fingers extended, tips spread horizontally rather than vertically.
+ * Whether the palm faces the camera, via the z-component of the palm-triangle
+ * normal (wrist, index knuckle, pinky knuckle). `mirror` flips x to match the
+ * preview. The palm/back convention may need a single sign flip per setup.
  */
-function isDash (landmarks: NormalizedLandmark[]): boolean {
-  const fingers: (keyof typeof FingerIndices)[] = [ 'index', 'middle', 'ring', 'pinky' ]
-
-  const allExtended = fingers.every(f => isFingerExtended(landmarks, f))
-
-  if (!allExtended)
-    return false
-
-  const indexTip = landmarks[FingerIndices.index.tip]
-  const pinkyTip = landmarks[FingerIndices.pinky.tip]
-
-  const yDiff = Math.abs(indexTip.y - pinkyTip.y)
-  const xDiff = Math.abs(indexTip.x - pinkyTip.x)
-
-  // Horizontal orientation: the hand lies on its side.
-  return xDiff > yDiff && xDiff > 0.2 && yDiff < 0.12
+function palmFacing (landmarks: NormalizedLandmark[], mirror: boolean): boolean {
+  const m = mirror ? -1 : 1
+  const w = landmarks[PalmIndices.wrist]
+  const i = landmarks[FingerIndices.index.base]
+  const p = landmarks[FingerIndices.pinky.base]
+  const ax = (i.x - w.x) * m, ay = i.y - w.y
+  const bx = (p.x - w.x) * m, by = p.y - w.y
+  const nz = ax * by - ay * bx
+  return nz < 0
 }
 
-/**
- * Index + middle extended, ring + pinky folded -> V (peace sign).
- */
-function isV (landmarks: NormalizedLandmark[]): boolean {
-  const indexTip  = landmarks[FingerIndices.index.tip]
-  const middleTip = landmarks[FingerIndices.middle.tip]
-  const wrist     = landmarks[PalmIndices.wrist]
+// ---------------------------------------------------------------------------
+// Primary gesture predicates
+// ---------------------------------------------------------------------------
 
-  const indexExtended  = isFingerExtended(landmarks, 'index')
-  const middleExtended = isFingerExtended(landmarks, 'middle')
-  const ringFolded     = isFingerFolded(landmarks, 'ring')
-  const pinkyFolded    = isFingerFolded(landmarks, 'pinky')
-
-  if (!indexExtended || !middleExtended || !ringFolded || !pinkyFolded)
-    return false
-
-  // The two fingers should fan out from the wrist within a sensible range.
-  const vAngle = angle(indexTip, wrist, middleTip)
-  return vAngle > 8 && vAngle < 70
+/** circle / OK sign: thumb touches a finger, with other fingers mostly open. */
+function detectCircle (landmarks: NormalizedLandmark[], ext: Record<Finger, boolean>, scale: number): Finger | null {
+  const touched = thumbTouchingFinger(landmarks, scale)
+  if (!touched)
+    return null
+  const others    = NON_THUMB.filter(f => f !== touched)
+  const openCount = others.filter(f => ext[f]).length
+  return openCount >= 2 ? touched : null
 }
 
-/**
- * Calculate bounding box of hand landmarks
- */
+function isV (ext: Record<Finger, boolean>): boolean {
+  return ext.index && ext.middle && !ext.ring && !ext.pinky
+}
+
+// ---------------------------------------------------------------------------
+// Bounding box + confidence
+// ---------------------------------------------------------------------------
 type CalculateBoundingBoxReturnType = { x: number; y: number; width: number; height: number }
 
 function calculateBoundingBox (landmarks: NormalizedLandmark[]): CalculateBoundingBoxReturnType {
@@ -181,69 +197,101 @@ function calculateBoundingBox (landmarks: NormalizedLandmark[]): CalculateBoundi
 }
 
 const BASE_CONFIDENCE: Record<GlyphType, number> = {
-  filled_circle: 0.95,
-  star:          0.85,
-  V:             0.85,
-  dash:          0.7,
-  unknown:       0.3
+  fist:    0.9,
+  circle:  0.88,
+  V:       0.85,
+  palm:    0.85,
+  dash:    0.8,
+  unknown: 0.3
 }
 
-/**
- * Detect hand gesture from landmarks.
- * Checks run from most-specific to most-general.
- */
+const FINGER_LABEL: Record<Finger, string> = {
+  thumb:  'THUMB',
+  index:  'INDEX',
+  middle: 'MIDDLE',
+  ring:   'RING',
+  pinky:  'PINKY'
+}
+
+// ---------------------------------------------------------------------------
+// Main detection
+// ---------------------------------------------------------------------------
 export function detectGesture (
   landmarks: NormalizedLandmark[],
-  handedness: Handedness
+  handedness: Handedness,
+  mirror: boolean = false
 ): DetectedGlyph {
   const boundingBox = calculateBoundingBox(landmarks)
   const handLabel   = (handedness?.label?.toLowerCase() as 'left' | 'right' | 'unknown') || 'unknown'
+  const scale       = handScale(landmarks)
+  const ext         = extendedSet(landmarks, scale)
 
-  const make = (type: GlyphType): DetectedGlyph => ({
+  const make = (type: GlyphType, subGesture?: string, subLabel?: string): DetectedGlyph => ({
     type,
+    subGesture,
+    subLabel,
     hand:       handLabel,
     confidence: BASE_CONFIDENCE[type],
     landmarks,
     boundingBox
   })
 
-  if (isFist(landmarks))
-    return make('filled_circle')
-  if (isV(landmarks))
-    return make('V')
-  if (isStar(landmarks))
-    return make('star')
-  if (isDash(landmarks))
-    return make('dash')
+  // 1. circle / OK (thumb touches a finger).
+  const circleFinger = detectCircle(landmarks, ext, scale)
+  if (circleFinger)
+    return make('circle', circleFinger.toUpperCase(), `\uD83D\uDC46 ${FINGER_LABEL[circleFinger]}`)
+
+  // 2. V (index + middle only) -> sub = facing.
+  if (isV(ext)) {
+    const facing = palmFacing(landmarks, mirror)
+    return make('V', facing ? 'PALM' : 'BACK', facing ? 'PALM SIDE' : 'BACK SIDE')
+  }
+
+  // 3. all four fingers extended -> palm (upright) or dash (slashing sideways).
+  const fourExtended = ext.index && ext.middle && ext.ring && ext.pinky
+  if (fourExtended) {
+    const tilt = tiltFromVertical(landmarks)
+    if (tilt < 35)
+      return make('palm')
+    const oct = pointingOctant(landmarks, mirror)
+    return make('dash', oct.tok, oct.label)
+  }
+
+  // 4. fist (>= 2 fingers folded) -> sub = which fingers are kept straight.
+  const foldedCount = NON_THUMB.filter(f => !ext[f]).length
+  if (foldedCount >= 2) {
+    const straight = ALL_FINGERS.filter(f => ext[f])
+    if (straight.length === 0)
+      return make('fist', 'CLOSED', 'CLOSED')
+    const tok   = straight.map(f => f.toUpperCase()).join('+')
+    const label = straight.map(f => FINGER_LABEL[f]).join(' + ')
+    return make('fist', tok, label)
+  }
 
   return make('unknown')
 }
 
-/**
- * Detect gestures for multiple hands
- */
 export function detectGestures (
   allLandmarks: NormalizedLandmark[][],
-  allHandedness: Handedness[]
+  allHandedness: Handedness[],
+  mirror: boolean = false
 ): DetectedGlyph[] {
   return allLandmarks.map((landmarks, index) =>
-    detectGesture(landmarks, allHandedness[index])
+    detectGesture(landmarks, allHandedness[index], mirror)
   )
 }
 
-/**
- * Run all gesture check functions and return their results (debug overlay).
- */
+/** Debug overlay helper: per-finger extension + the resolved gesture. */
 export function runAllChecks (landmarks: NormalizedLandmark[]): CheckResult[] {
-  const checks: Array<{ name: string; fn: (l: NormalizedLandmark[]) => boolean }> = [
-    { name: 'isFist (filled_circle)', fn: isFist },
-    { name: 'isV', fn: isV },
-    { name: 'isStar', fn: isStar },
-    { name: 'isDash', fn: isDash },
+  const scale = handScale(landmarks)
+  const ext   = extendedSet(landmarks, scale)
+  const g     = detectGesture(landmarks, { label: 'Right', score: 1, index: 0 })
+  return [
+    { name: `=> ${g.type}${g.subLabel ? ' [' + g.subLabel + ']' : ''}`, passed: g.type !== 'unknown' },
+    { name: 'thumb extended',  passed: ext.thumb },
+    { name: 'index extended',  passed: ext.index },
+    { name: 'middle extended', passed: ext.middle },
+    { name: 'ring extended',   passed: ext.ring },
+    { name: 'pinky extended',  passed: ext.pinky }
   ]
-
-  return checks.map(check => ({
-    name:   check.name,
-    passed: check.fn(landmarks),
-  }))
 }

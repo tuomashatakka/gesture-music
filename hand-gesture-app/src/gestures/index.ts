@@ -28,9 +28,11 @@ export {
 } from './types';
 
 export { detectGesture, detectGestures, runAllChecks } from './gestureDetector';
+export { detectExpression } from './faceExpression';
+export type { ExpressionType, DetectedExpression } from './faceExpression';
 export {
   generateGlyphSVG,
-  generateGlyphSymbolMarkup,
+  symbolMarkup,
   getGlyphDataURL,
   createGlyphSVGElement
 } from './svgGenerator';

@@ -15,10 +15,11 @@
  * When a hand disappears the div keeps its last position and fades translucent.
  */
 
-import type { GlyphType } from '../gestures/types';
-import { generateGlyphSymbolMarkup } from '../gestures/svgGenerator';
+import { symbolMarkup } from '../gestures/svgGenerator';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+const DEFAULT_COLOR = '#00FF88';
 
 const POS_LERP = 0.4;
 const OPACITY_LERP = 0.18;
@@ -49,14 +50,23 @@ export interface GlyphUpdate {
   id: string;
   x: number; // target screen position (px) of the badge centre
   y: number;
-  gesture: GlyphType;
-  hand: 'left' | 'right' | 'unknown';
+  /** Symbol name passed to symbolMarkup (hand glyph type OR expression name). */
+  symbol: string;
+  /** Main label text, e.g. "PALM - LEFT" or "SMILE". */
+  label: string;
+  /** Optional sub-gesture label shown beneath the main label. */
+  subLabel?: string;
+  /** Stroke / accent colour (hand glyphs = green, expression = blue). */
+  color?: string;
   /** Delta info while a gesture is being held; null when not holding. */
   delta: DeltaInfo | null;
+  /** When false, hides the rotation ring track entirely (used for the face). */
+  decorations?: boolean;
 }
 
 interface GlyphState {
   div: HTMLDivElement;
+  svg: SVGSVGElement;
   symbolGroup: SVGGElement;
   ringTrack: SVGCircleElement;
   ringProgress: SVGCircleElement;
@@ -64,9 +74,11 @@ interface GlyphState {
   arrowY: SVGLineElement;
   arrowZ: SVGLineElement;
   labelText: SVGTextElement;
+  subText: SVGTextElement;
   deltaText: SVGTextElement;
 
-  curGesture: GlyphType | null;
+  curSymbol: string | null;
+  curColor: string;
   curX: number;
   curY: number;
   tgtX: number;
@@ -145,7 +157,7 @@ export class GlyphOverlay {
 
     // --- glyph symbol (centred 100x100 box) -------------------------------
     const symbolGroup = document.createElementNS(SVG_NS, 'g');
-    symbolGroup.setAttribute('transform', `translate(${CENTER - 50} ${CENTER - 50})`);
+    symbolGroup.setAttribute('transform', `translate(${CENTER - 50} ${CENTER - 50}) scale(1)`);
     svg.appendChild(symbolGroup);
 
     // --- gizmo arrows -----------------------------------------------------
@@ -169,14 +181,22 @@ export class GlyphOverlay {
     // --- text -------------------------------------------------------------
     const labelText = document.createElementNS(SVG_NS, 'text');
     labelText.setAttribute('x', String(CENTER));
-    labelText.setAttribute('y', String(VB - 8));
+    labelText.setAttribute('y', String(VB - 26));
     labelText.setAttribute('text-anchor', 'middle');
-    labelText.setAttribute('fill', '#00FF88');
+    labelText.setAttribute('fill', DEFAULT_COLOR);
     labelText.setAttribute('font-family', 'sans-serif');
     labelText.setAttribute('font-size', '15');
     labelText.setAttribute('font-weight', 'bold');
-    labelText.style.textShadow = '0 0 4px rgba(0,255,136,0.7)';
     svg.appendChild(labelText);
+
+    const subText = document.createElementNS(SVG_NS, 'text');
+    subText.setAttribute('x', String(CENTER));
+    subText.setAttribute('y', String(VB - 8));
+    subText.setAttribute('text-anchor', 'middle');
+    subText.setAttribute('fill', '#ffffff');
+    subText.setAttribute('font-family', 'monospace');
+    subText.setAttribute('font-size', '12');
+    svg.appendChild(subText);
 
     const deltaText = document.createElementNS(SVG_NS, 'text');
     deltaText.setAttribute('x', String(CENTER));
@@ -192,6 +212,7 @@ export class GlyphOverlay {
 
     const state: GlyphState = {
       div,
+      svg,
       symbolGroup,
       ringTrack,
       ringProgress,
@@ -199,8 +220,10 @@ export class GlyphOverlay {
       arrowY,
       arrowZ,
       labelText,
+      subText,
       deltaText,
-      curGesture: null,
+      curSymbol: null,
+      curColor: '',
       curX: 0,
       curY: 0,
       tgtX: 0,
@@ -216,6 +239,7 @@ export class GlyphOverlay {
 
   update(u: GlyphUpdate): void {
     const g = this.ensure(u.id);
+    const color = u.color ?? DEFAULT_COLOR;
     g.tgtX = u.x;
     g.tgtY = u.y;
     g.tgtOpacity = 1;
@@ -227,21 +251,31 @@ export class GlyphOverlay {
       g.initialised = true;
     }
 
-    // Swap the symbol markup only when the gesture actually changes.
-    if (g.curGesture !== u.gesture) {
-      g.symbolGroup.innerHTML = generateGlyphSymbolMarkup(u.gesture);
-      g.curGesture = u.gesture;
+    // Re-render symbol when either the symbol OR the colour changes.
+    if (g.curSymbol !== u.symbol || g.curColor !== color) {
+      g.symbolGroup.innerHTML = symbolMarkup(u.symbol, color);
+      g.curSymbol = u.symbol;
     }
 
-    // Label.
-    const label = u.gesture === 'unknown' ? 'UNKNOWN' : u.gesture.replace('_', ' ').toUpperCase();
-    g.labelText.textContent = `${label} - ${u.hand.toUpperCase()}`;
+    // Apply colour theming once per change.
+    if (g.curColor !== color) {
+      g.curColor = color;
+      g.labelText.setAttribute('fill', color);
+      g.svg.style.filter = `drop-shadow(0 0 6px ${color}8c)`;
+    }
+
+    // Labels.
+    g.labelText.textContent = u.label;
+    g.subText.textContent = u.subLabel ?? '';
+
+    // Optional ring decoration (hidden for the face glyph).
+    g.ringTrack.style.display = u.decorations === false ? 'none' : '';
 
     // Delta-driven visuals (rotation ring + gizmo + readout).
-    this.applyDelta(g, u.delta);
+    this.applyDelta(g, u.delta, color);
   }
 
-  private applyDelta(g: GlyphState, delta: DeltaInfo | null): void {
+  private applyDelta(g: GlyphState, delta: DeltaInfo | null, color: string): void {
     if (!delta) {
       // Not holding: collapse ring + hide arrows + clear readout.
       g.ringProgress.setAttribute('stroke-dasharray', `0 ${RING_C}`);
@@ -251,6 +285,7 @@ export class GlyphOverlay {
       g.deltaText.textContent = '';
       return;
     }
+    void color;
 
     // Rotation ring: fraction of a full turn, sign picks the colour.
     const frac = clamp(Math.abs(delta.dAngle) / 360, 0, 1);

@@ -31,27 +31,33 @@ export interface HandResult {
 }
 
 /**
- * Supported glyph/shape types.
- *
- * Simplified to the gesture set demonstrated in the reference photos:
- * - star          : open hand, all fingers spread wide
- * - filled_circle : closed fist
- * - dash           : flat hand held sideways (all fingers extended, horizontal)
- * - V              : index + middle extended (peace / victory sign)
- * - unknown        : nothing matched
+ * Supported hand glyph types (matching the reference photos):
+ * - palm   : open hand, all fingers extended, pointing roughly up
+ * - fist   : closed fist (sub-gesture = which fingers are kept straight)
+ * - circle : thumb touching a finger (OK sign; sub-gesture = which finger)
+ * - V      : index + middle extended (sub-gesture = palm side vs back)
+ * - dash   : flat/slashing open hand pointing sideways (sub-gesture = direction)
+ * - unknown: nothing matched
  */
 export type GlyphType =
-  | 'star'
-  | 'filled_circle'
-  | 'dash'
+  | 'palm'
+  | 'fist'
+  | 'circle'
   | 'V'
+  | 'dash'
   | 'unknown';
 
 /**
- * Detected glyph with metadata
+ * Detected glyph with metadata.
+ *
+ * `subGesture` is a stable machine token (e.g. 'INDEX', 'PALM', 'NE') and
+ * `subLabel` is a pretty display string. A sub-gesture refines the primary
+ * gesture WITHOUT changing it, so it never resets the held-delta reference.
  */
 export interface DetectedGlyph {
   type: GlyphType;
+  subGesture?: string;
+  subLabel?: string;
   hand: 'left' | 'right' | 'unknown';
   confidence: number; // 0-1 confidence score
   landmarks: NormalizedLandmark[]; // The landmarks used for detection

@@ -1,21 +1,23 @@
 /**
- * Hand, Face, and Pose detection with MediaPipe Holistic.
+ * Hand + Face detection with MediaPipe Holistic. (Body/pose tracking removed.)
  *
- * Rendering architecture (post-refactor):
+ * Rendering architecture:
  *   - The skeleton mesh lives on a PERSISTENT SVG overlay (MeshOverlay), not a
  *     redrawn canvas. Joints interpolate toward their targets each frame and the
- *     whole hand/face/pose group is positioned with translate3d.
+ *     whole hand/face group is positioned with translate3d.
  *   - Glyph badges are PERSISTENT divs (GlyphOverlay) positioned with translate3d.
- *   - When a hand/face/pose leaves frame it keeps its last pose and fades to a
+ *     Hands get a green gesture glyph; the face gets a BLUE expression glyph.
+ *   - When a hand/face leaves frame it keeps its last pose and fades to a
  *     translucent floor instead of vanishing.
  *   - The front camera is mirrored, so landmark x is flipped to match what the
  *     user sees (fixes the previously back-to-front mesh).
  *   - While a gesture is held we show its delta position (3-axis gizmo arrows)
- *     and delta rotation (a circular progress ring around the glyph).
+ *     and delta rotation (a circular progress ring around the glyph). The held
+ *     reference persists across sub-gesture changes and brief dropouts.
  */
 
 import { FilesetResolver, HolisticLandmarker, type HolisticLandmarkerResult } from '@mediapipe/tasks-vision';
-import { detectGesture, runAllChecks } from './gestures';
+import { detectGesture, runAllChecks, detectExpression } from './gestures';
 import type { NormalizedLandmark } from './gestures';
 import { MeshOverlay, type ProjectedPoint, type EntitySpec } from './render/meshOverlay';
 import { GlyphOverlay } from './render/glyphOverlay';
@@ -112,7 +114,7 @@ function toggleDebug(): void {
 // ---------------------------------------------------------------------------
 const HAND_COLORS = ['#00FF88', '#FF6B6B'];
 const FACE_COLOR = '#4FC3F7';
-const POSE_COLOR = '#FFB74D';
+const EXPRESSION_COLOR = '#4FC3F7';
 
 type Connection = { start: number; end: number };
 function toTupleArray(connections: readonly Connection[]): [number, number][] {
@@ -120,7 +122,6 @@ function toTupleArray(connections: readonly Connection[]): [number, number][] {
 }
 
 const HAND_CONNECTIONS = toTupleArray(HolisticLandmarker.HAND_CONNECTIONS);
-const POSE_CONNECTIONS = toTupleArray(HolisticLandmarker.POSE_CONNECTIONS);
 const FACE_CONNECTIONS: [number, number][] = [
   ...toTupleArray(HolisticLandmarker.FACE_LANDMARKS_FACE_OVAL),
   ...toTupleArray(HolisticLandmarker.FACE_LANDMARKS_LIPS),
@@ -162,8 +163,9 @@ function updateDebugOverlay(landmarks: NormalizedLandmark[] | null): void {
     return;
   }
   const checks = runAllChecks(landmarks);
-  const gesture = detectGesture(landmarks, { label: 'Right', score: 1, index: 0 });
-  let html = `<div style="margin-bottom:8px;font-weight:bold;color:#4fc3f7;">Detected: ${gesture.type}</div>`;
+  const gesture = detectGesture(landmarks, { label: 'Right', score: 1, index: 0 }, MIRROR);
+  const subTxt = gesture.subLabel ? ` [${gesture.subLabel}]` : '';
+  let html = `<div style="margin-bottom:8px;font-weight:bold;color:#4fc3f7;">Detected: ${gesture.type}${subTxt}</div>`;
   html += `<div style="margin-bottom:8px;font-size:11px;color:#aaa;">Confidence: ${(gesture.confidence * 100).toFixed(0)}%</div>`;
   html += '<div style="margin-bottom:4px;font-size:11px;color:#aaa;">Checks:</div>';
   for (const check of checks) {
@@ -209,8 +211,9 @@ function processResults(result: HolisticLandmarkerResult): void {
   meshOverlay.markAllAbsent();
   glyphOverlay.markAllAbsent();
 
-  // 1. Face (lines only).
+  // 1. Face mesh (lines only) + a BLUE expression glyph above the forehead.
   if (result.faceLandmarks && result.faceLandmarks.length > 0) {
+    const face = result.faceLandmarks[0];
     const faceSpec: EntitySpec = {
       id: 'face',
       connections: FACE_CONNECTIONS,
@@ -218,23 +221,25 @@ function processResults(result: HolisticLandmarkerResult): void {
       lineWidth: 1.5,
       drawPoints: false
     };
-    meshOverlay.update(faceSpec, projectAll(result.faceLandmarks[0]));
+    const projectedFace = projectAll(face);
+    meshOverlay.update(faceSpec, projectedFace);
+
+    // Expression glyph (blue) positioned above the top of the head.
+    const expr = detectExpression(face);
+    const forehead = project(face[10] ?? face[0]);
+    glyphOverlay.update({
+      id: 'face-expr',
+      x: forehead.x,
+      y: forehead.y - 90,
+      symbol: expr.type,
+      label: `${expr.type.toUpperCase()}`,
+      color: EXPRESSION_COLOR,
+      delta: null,
+      decorations: false
+    });
   }
 
-  // 2. Pose.
-  if (result.poseLandmarks && result.poseLandmarks.length > 0) {
-    const poseSpec: EntitySpec = {
-      id: 'pose',
-      connections: POSE_CONNECTIONS,
-      color: POSE_COLOR,
-      lineWidth: 2,
-      pointRadius: 3,
-      drawPoints: true
-    };
-    meshOverlay.update(poseSpec, projectAll(result.poseLandmarks[0]));
-  }
-
-  // 3. Hands (left + right, stable ids keyed by handedness).
+  // 2. Hands (left + right, stable ids keyed by handedness).
   const hands: { id: string; label: 'Left' | 'Right'; landmarks: NormalizedLandmark[]; color: string }[] = [];
   if (result.leftHandLandmarks?.[0]) {
     hands.push({ id: 'hand-Left', label: 'Left', landmarks: result.leftHandLandmarks[0], color: HAND_COLORS[1] });
@@ -256,8 +261,8 @@ function processResults(result: HolisticLandmarkerResult): void {
       drawPoints: true
     }, projected);
 
-    // Gesture + held-delta.
-    const glyph = detectGesture(hand.landmarks, { label: hand.label, score: 0.9, index: 0 });
+    // Gesture (+ sub-gesture) and the held-delta relative to the gesture start.
+    const glyph = detectGesture(hand.landmarks, { label: hand.label, score: 0.9, index: 0 }, MIRROR);
     const delta = holdTracker.update(hand.id, glyph.type, hand.landmarks, MIRROR);
 
     // Badge floats just above the hand.
@@ -266,21 +271,24 @@ function processResults(result: HolisticLandmarkerResult): void {
     for (const p of projected) minY = Math.min(minY, p.y);
     const badgeY = minY - 70;
 
+    const mainLabel = glyph.type === 'unknown'
+      ? `UNKNOWN - ${hand.label.toUpperCase()}`
+      : `${glyph.type.toUpperCase()} - ${hand.label.toUpperCase()}`;
+
     glyphOverlay.update({
       id: hand.id,
       x: c.x,
       y: badgeY,
-      gesture: glyph.type,
-      hand: hand.label.toLowerCase() as 'left' | 'right',
+      symbol: glyph.type,
+      label: mainLabel,
+      subLabel: glyph.subLabel,
+      color: hand.color,
       delta
     });
   }
 
-  // Hands seen this frame are present; the others were left absent above.
-  const seen = new Set(hands.map(h => h.id));
-  for (const id of ['hand-Left', 'hand-Right']) {
-    if (!seen.has(id)) holdTracker.release(id);
-  }
+  // NOTE: we intentionally do NOT release hold references for hands that left
+  // frame, so a held gesture resumes its delta origin when the hand returns.
 
   // Status + debug.
   if (hands.length > 0) {
@@ -357,8 +365,8 @@ async function init(): Promise<void> {
       });
     }
 
-    statusElement.textContent = 'Detection ready! Show your hands, face, and pose.';
-    infoElement.textContent = 'Hand/Face/Pose Detection | Gestures: fist, V, open hand (star), flat hand (dash)';
+    statusElement.textContent = 'Detection ready! Show your hands and face.';
+    infoElement.textContent = 'Hand + Face Detection | Gestures: palm, fist, circle (OK), V, dash';
     processFrame();
   } catch (error) {
     console.error('Error initializing detection:', error);

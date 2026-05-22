@@ -3,13 +3,18 @@
  *
  * When a hand starts holding a (non-unknown) gesture, we capture a reference
  * pose: the hand centre, depth and in-plane rotation at that instant. While the
- * same gesture is held, we report the delta of the current pose relative to
- * that reference. Changing gesture, going unknown, or losing the hand resets
- * the reference.
+ * same PRIMARY gesture is held, we report the delta of the current pose
+ * relative to that reference.
+ *
+ * The reference persists until a genuinely NEW primary gesture begins:
+ *   - sub-gesture changes (e.g. fist INDEX -> fist INDEX+PINKY) keep the ref,
+ *   - brief `unknown` blips keep the ref (we just stop reporting a delta),
+ *   - the hand leaving frame keeps the ref (so it resumes on return).
+ * Only switching to a different known primary gesture re-captures it.
  *
  * Coordinates are in MediaPipe normalized space (the same space used for
- * detection), so deltas are resolution-independent. Note: callers pass the
- * mirror flag so the captured rotation matches what the user sees on screen.
+ * detection), so deltas are resolution-independent. Callers pass the mirror
+ * flag so captured rotation/x match what the user sees on screen.
  */
 
 import type { NormalizedLandmark, GlyphType } from '../gestures/types';
@@ -79,17 +84,17 @@ export class GestureHoldTracker {
     landmarks: NormalizedLandmark[],
     mirror: boolean
   ): HoldDelta | null {
-    if (gesture === 'unknown') {
-      this.refs.delete(id);
+    // Unknown: don't report a delta, but KEEP the existing reference so a brief
+    // detection dropout doesn't reset the user's held-gesture origin.
+    if (gesture === 'unknown')
       return null;
-    }
 
     const centre = palmCentre(landmarks);
     const angle = handAngle(landmarks, mirror);
 
     const ref = this.refs.get(id);
     if (!ref || ref.gesture !== gesture) {
-      // (Re)capture the reference pose for this newly-held gesture.
+      // A genuinely new primary gesture started -> (re)capture the reference.
       this.refs.set(id, { gesture, cx: centre.x, cy: centre.y, cz: centre.z, angle });
       return { dx: 0, dy: 0, dz: 0, dAngle: 0 };
     }
@@ -103,7 +108,7 @@ export class GestureHoldTracker {
     };
   }
 
-  /** Drop the reference for a hand that is no longer detected. */
+  /** Explicitly drop a hand's reference (not called on mere disappearance). */
   release(id: string): void {
     this.refs.delete(id);
   }
