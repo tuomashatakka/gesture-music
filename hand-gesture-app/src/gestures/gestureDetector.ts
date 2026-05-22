@@ -7,7 +7,8 @@ import type {
   NormalizedLandmark, 
   Handedness, 
   CircleVariant, 
-  DetectedGlyph
+  DetectedGlyph,
+  GlyphType
 } from './types';
 import { 
   FingerIndices,
@@ -16,8 +17,10 @@ import {
 
 // Thresholds for gesture detection
 const THUMB_FINGER_DISTANCE_THRESHOLD = 0.15; // Normalized distance for thumb-finger connection
-const FINGER_EXTENDED_ANGLE = 140; // Degrees - finger is extended if angle > this
-const FINGER_FOLDED_ANGLE = 60; // Degrees - finger is folded if angle < this
+const FINGER_EXTENDED_ANGLE = 130; // Degrees - finger is extended if angle > this (more lenient)
+const FINGER_FOLDED_ANGLE = 70; // Degrees - finger is folded if angle < this (more realistic)
+const FINGER_NEUTRAL_LOW = 70; // Lower bound for neutral position
+const FINGER_NEUTRAL_HIGH = 130; // Upper bound for neutral position
 
 /**
  * Calculate Euclidean distance between two landmarks
@@ -82,6 +85,19 @@ function isFingerFolded(landmarks: NormalizedLandmark[], finger: keyof typeof Fi
 }
 
 /**
+ * Check if a finger is in neutral position (not clearly extended or folded)
+ */
+function isFingerNeutral(landmarks: NormalizedLandmark[], finger: keyof typeof FingerIndices): boolean {
+  const indices = FingerIndices[finger];
+  const base = landmarks[indices.base];
+  const mid1 = landmarks[indices.base + 1];
+  const tip = landmarks[indices.tip];
+  
+  const jointAngle = angle(base, mid1, tip);
+  return jointAngle >= FINGER_NEUTRAL_LOW && jointAngle <= FINGER_NEUTRAL_HIGH;
+}
+
+/**
  * Check if thumb is touching a specific finger
  */
 function isThumbTouchingFinger(
@@ -125,9 +141,14 @@ function isFist(landmarks: NormalizedLandmark[]): boolean {
   const thumbBase = landmarks[FingerIndices.thumb.base];
   
   // Thumb tip should be close to palm
-  const thumbFolded = distance(thumbTip, thumbBase) < 0.1;
+  const thumbFolded = distance(thumbTip, thumbBase) < 0.15;
   
-  return allFingersFolded && thumbFolded;
+  // Also check that no fingers are extended
+  const noFingersExtended = fingers.every(finger => 
+    !isFingerExtended(landmarks, finger)
+  );
+  
+  return allFingersFolded && thumbFolded && noFingersExtended;
 }
 
 /**
@@ -150,7 +171,11 @@ function isCircle(landmarks: NormalizedLandmark[]): { isCircle: boolean; variant
     .filter(f => f !== touchedFinger)
     .every(f => isFingerExtended(landmarks, f) || !isFingerFolded(landmarks, f));
   
-  if (fingerExtended && otherFingersExtended) {
+  // For circle detection, we need to ensure this is NOT a fist
+  // A fist has all fingers folded, so if all fingers are folded, it's not a circle
+  const allFingersFolded = otherFingers.every(f => isFingerFolded(landmarks, f));
+  
+  if (fingerExtended && otherFingersExtended && !allFingersFolded) {
     return { isCircle: true, variant: thumbConnection };
   }
   
@@ -175,7 +200,8 @@ function isDash(landmarks: NormalizedLandmark[]): boolean {
   const xDiff = Math.abs(indexTip.x - pinkyTip.x);
   
   // Horizontal orientation: x difference > y difference
-  return xDiff > yDiff && xDiff > 0.15;
+  // Make dash detection more strict to avoid false positives
+  return xDiff > yDiff && xDiff > 0.2 && yDiff < 0.1;
 }
 
 /**
@@ -391,6 +417,35 @@ function isSalmiakki(landmarks: NormalizedLandmark[]): boolean {
 }
 
 /**
+ * Simple gesture detection for common hand positions
+ * This provides a fallback when specific gestures aren't clearly detected
+ */
+function detectSimpleGesture(landmarks: NormalizedLandmark[]): { type: GlyphType; confidence: number } {
+  const fingers: (keyof typeof FingerIndices)[] = ['thumb', 'index', 'middle', 'ring', 'pinky'];
+  
+  // Count extended fingers
+  const extendedCount = fingers.filter(finger => isFingerExtended(landmarks, finger)).length;
+  const foldedCount = fingers.filter(finger => isFingerFolded(landmarks, finger)).length;
+  const neutralCount = fingers.filter(finger => isFingerNeutral(landmarks, finger)).length;
+  
+  // Simple heuristics
+  if (foldedCount >= 4) {
+    return { type: 'filled_circle', confidence: 0.7 };
+  }
+  if (extendedCount >= 4) {
+    return { type: 'star', confidence: 0.6 };
+  }
+  if (extendedCount === 2 && foldedCount >= 2) {
+    return { type: 'V', confidence: 0.5 };
+  }
+  if (extendedCount === 1 && foldedCount >= 3) {
+    return { type: 'I', confidence: 0.6 };
+  }
+  
+  return { type: 'unknown', confidence: 0.3 };
+}
+
+/**
  * Check if hand is forming an X (crossed fingers)
  */
 function isX(landmarks: NormalizedLandmark[]): boolean {
@@ -430,7 +485,13 @@ function isI(landmarks: NormalizedLandmark[]): boolean {
   const pinkyFolded = isFingerFolded(landmarks, 'pinky');
   const thumbFolded = isFingerFolded(landmarks, 'thumb');
   
-  return indexExtended && middleFolded && ringFolded && pinkyFolded && thumbFolded;
+  // Also check that other fingers are not extended
+  const otherFingersNotExtended = !isFingerExtended(landmarks, 'middle') && 
+    !isFingerExtended(landmarks, 'ring') && 
+    !isFingerExtended(landmarks, 'pinky') && 
+    !isFingerExtended(landmarks, 'thumb');
+  
+  return indexExtended && middleFolded && ringFolded && pinkyFolded && thumbFolded && otherFingersNotExtended;
 }
 
 /**
@@ -448,6 +509,8 @@ function isV(landmarks: NormalizedLandmark[]): boolean {
   const ringFolded = isFingerFolded(landmarks, 'ring');
   const pinkyFolded = isFingerFolded(landmarks, 'pinky');
   
+
+  
   if (!indexExtended || !middleExtended || !ringFolded || !pinkyFolded) {
     return false;
   }
@@ -456,11 +519,14 @@ function isV(landmarks: NormalizedLandmark[]): boolean {
   const tipDistance = distance2D(indexTip, middleTip);
   const baseDistance = distance2D(indexBase, middleBase);
   
-  // Check angle between index and middle fingers (should be around 45-90 degrees for V)
+  // Check angle between index and middle fingers (should be around 30-70 degrees for V)
   const vAngle = angle(indexTip, wrist, middleTip);
-  const isVAngle = vAngle > 30 && vAngle < 90;
+  const isVAngle = vAngle > 20 && vAngle < 70;
   
-  return tipDistance < baseDistance * 0.8 && isVAngle;
+
+  
+  // Relax the tip distance requirement and focus more on the angle
+  return tipDistance < baseDistance * 0.9 && isVAngle;
 }
 
 /**
@@ -719,11 +785,12 @@ export function detectGesture(
     };
   }
   
-  // Default: unknown
+  // Default: use simple gesture detection as fallback
+  const simpleResult = detectSimpleGesture(landmarks);
   return {
-    type: 'unknown',
+    type: simpleResult.type,
     hand: handLabel,
-    confidence: calculateGestureConfidence(landmarks, 'unknown'),
+    confidence: simpleResult.confidence,
     landmarks,
     boundingBox
   };
