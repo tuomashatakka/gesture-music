@@ -1,10 +1,20 @@
 /**
- * Hand Gesture Detection with MediaPipe Hands
- * Detects hand gestures from camera input and draws skeleton wireframe overlay
+ * Hand Gesture Detection with MediaPipe Hands and Glyph Recognition
+ * Detects hand gestures from camera input, draws skeleton wireframe overlay,
+ * and displays recognized glyph symbols next to each hand.
  * 
  * Note: MediaPipe Hands is loaded via CDN script tag in index.html
  * The Hands class and HAND_CONNECTIONS are available as globals
  */
+
+// Import gesture detection module
+import { 
+  detectGestures, 
+  generateGlyphSVG, 
+  GlyphType,
+  CircleVariant,
+  DetectedGlyph 
+} from './gestures';
 
 // Declare the global Hands class and HAND_CONNECTIONS from MediaPipe
 interface NormalizedLandmark {
@@ -55,12 +65,31 @@ declare global {
 const videoElement = document.getElementById('video') as HTMLVideoElement;
 const canvasElement = document.getElementById('canvas') as HTMLCanvasElement;
 const statusElement = document.getElementById('status') as HTMLElement;
+const infoElement = document.getElementById('info') as HTMLElement;
+
+// Create a container for glyph overlays
+const glyphContainer = document.createElement('div');
+glyphContainer.id = 'glyph-container';
+glyphContainer.style.position = 'absolute';
+glyphContainer.style.top = '0';
+glyphContainer.style.left = '0';
+glyphContainer.style.width = '100%';
+glyphContainer.style.height = '100%';
+glyphContainer.style.pointerEvents = 'none';
+glyphContainer.style.zIndex = '10';
+
+// Add glyph container to video container
+const videoContainer = document.getElementById('video-container');
+videoContainer?.appendChild(glyphContainer);
 
 // Canvas context
 const canvasCtx = canvasElement.getContext('2d')!;
 
 // Hand detection instance
 let hands: HandsInterface | null = null;
+
+// Store glyph elements for cleanup
+const glyphElements: { element: HTMLElement; handIndex: number }[] = [];
 
 // Default hand connections (fallback in case global not loaded)
 const DEFAULT_HAND_CONNECTIONS: [number, number][] = [
@@ -76,6 +105,11 @@ const HAND_COLORS = ['#00FF88', '#FF6B6B', '#4ECDC4', '#FFE66D'];
 const POINT_COLOR = '#FFFFFF';
 const POINT_RADIUS = 3;
 const LINE_WIDTH = 2;
+
+// Glyph display settings
+const GLYPH_SIZE = 80;
+const GLYPH_OFFSET_X = 100; // Distance from hand to glyph
+const GLYPH_OFFSET_Y = -50; // Vertical offset from hand center
 
 /**
  * Wait for MediaPipe Hands library to be loaded
@@ -178,6 +212,134 @@ function drawHand(landmarks: NormalizedLandmark[], color: string, connections: [
 }
 
 /**
+ * Calculate the center position of a hand from its landmarks
+ */
+function getHandCenter(landmarks: NormalizedLandmark[]): { x: number; y: number } {
+  // Use palm landmarks for center calculation
+  const palmLandmarks = landmarks.slice(0, 9); // Wrist + thumb base + finger bases
+  let sumX = 0, sumY = 0;
+  
+  palmLandmarks.forEach(l => {
+    sumX += l.x;
+    sumY += l.y;
+  });
+  
+  return {
+    x: sumX / palmLandmarks.length,
+    y: sumY / palmLandmarks.length
+  };
+}
+
+/**
+ * Create and position a glyph SVG element
+ */
+function createGlyphElement(glyph: DetectedGlyph, handIndex: number, canvasWidth: number, canvasHeight: number): HTMLElement {
+  const center = getHandCenter(glyph.landmarks);
+  
+  // Calculate glyph position (right of the hand for left hand, left for right hand)
+  const isRightHand = glyph.hand === 'right';
+  const xPos = (center.x * canvasWidth) + (isRightHand ? -GLYPH_OFFSET_X : GLYPH_OFFSET_X);
+  const yPos = (center.y * canvasHeight) + GLYPH_OFFSET_Y;
+  
+  // Create container div
+  const container = document.createElement('div');
+  container.style.position = 'absolute';
+  container.style.left = `${xPos}px`;
+  container.style.top = `${yPos}px`;
+  container.style.transform = 'translate(-50%, -50%)';
+  container.style.zIndex = '10';
+  container.style.pointerEvents = 'none';
+  container.dataset.handIndex = handIndex.toString();
+  container.dataset.hand = glyph.hand;
+  
+  // Create SVG element
+  const svg = generateGlyphSVG(glyph.type, glyph.variant as CircleVariant);
+  container.innerHTML = svg.svg;
+  
+  // Style the SVG
+  const svgElement = container.querySelector('svg');
+  if (svgElement) {
+    svgElement.style.width = `${GLYPH_SIZE}px`;
+    svgElement.style.height = `${GLYPH_SIZE}px`;
+    svgElement.style.filter = 'drop-shadow(0 0 8px rgba(0, 255, 136, 0.7))';
+  }
+  
+  // Add glyph name label
+  const label = document.createElement('div');
+  label.textContent = getGlyphLabel(glyph);
+  label.style.position = 'absolute';
+  label.style.top = `${GLYPH_SIZE + 10}px`;
+  label.style.left = '50%';
+  label.style.transform = 'translateX(-50%)';
+  label.style.color = '#00FF88';
+  label.style.fontSize = '14px';
+  label.style.fontWeight = 'bold';
+  label.style.textShadow = '0 0 4px rgba(0, 255, 136, 0.7)';
+  label.style.whiteSpace = 'nowrap';
+  container.appendChild(label);
+  
+  return container;
+}
+
+/**
+ * Get display label for a glyph
+ */
+function getGlyphLabel(glyph: DetectedGlyph): string {
+  let label = glyph.type.replace('_', ' ').toUpperCase();
+  
+  // Add variant info for circle
+  if (glyph.type === 'circle' && glyph.variant) {
+    label += ` (${glyph.variant.replace('_', ' ').toUpperCase()})`;
+  }
+  
+  // Add hand info
+  label += ` - ${glyph.hand.toUpperCase()}`;
+  
+  return label;
+}
+
+/**
+ * Update or create glyph display for detected gestures
+ */
+function updateGlyphDisplays(
+  results: Results,
+  canvasWidth: number,
+  canvasHeight: number
+): void {
+  // Clear previous glyph elements
+  glyphElements.forEach(({ element }) => {
+    if (element.parentNode) {
+      element.parentNode.removeChild(element);
+    }
+  });
+  glyphElements.length = 0;
+
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    return;
+  }
+
+  const connections = window.HAND_CONNECTIONS || DEFAULT_HAND_CONNECTIONS;
+
+  // Detect gestures for all hands
+  const gestures = detectGestures(
+    results.multiHandLandmarks,
+    results.multiHandedness
+  );
+
+  // Create glyph elements for each detected gesture
+  gestures.forEach((gesture, handIndex) => {
+    const element = createGlyphElement(
+      gesture,
+      handIndex,
+      canvasWidth,
+      canvasHeight
+    );
+    glyphContainer.appendChild(element);
+    glyphElements.push({ element, handIndex });
+  });
+}
+
+/**
  * Handle hand detection results
  */
 function onResults(results: Results): void {
@@ -198,8 +360,19 @@ function onResults(results: Results): void {
       const color = HAND_COLORS[handIndex % HAND_COLORS.length];
       drawHand(landmarks, color, connections);
     });
+    
+    // Update glyph displays
+    updateGlyphDisplays(results, canvasElement.width, canvasElement.height);
   } else {
     statusElement.textContent = 'No hands detected. Show your hands to the camera.';
+    
+    // Clear glyph displays
+    glyphElements.forEach(({ element }) => {
+      if (element.parentNode) {
+        element.parentNode.removeChild(element);
+      }
+    });
+    glyphElements.length = 0;
   }
 }
 
@@ -264,7 +437,8 @@ async function init(): Promise<void> {
       maxNumHands: 2,
       modelComplexity: 1,
       minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
+      minTrackingConfidence: 0.5,
+      selfieMode: true
     });
     
     // Register results listener
@@ -274,6 +448,7 @@ async function init(): Promise<void> {
     await hands.initialize();
     
     statusElement.textContent = 'Hand detection ready! Show your hands to the camera.';
+    infoElement.textContent = 'Hand Gesture Detection with MediaPipe Hands | Glyph Recognition Active';
   } catch (error) {
     console.error('Error initializing hands:', error);
     statusElement.textContent = 'Error loading hand detection model. Check console.';
@@ -301,6 +476,17 @@ async function cleanup(): Promise<void> {
 window.addEventListener('beforeunload', () => {
   cleanup().catch(console.error);
 });
+
+// Handle window resize
+window.addEventListener('resize', () => {
+  // Update glyph container size
+  glyphContainer.style.width = `${window.innerWidth}px`;
+  glyphContainer.style.height = `${window.innerHeight}px`;
+});
+
+// Initialize glyph container size
+glyphContainer.style.width = `${window.innerWidth}px`;
+glyphContainer.style.height = `${window.innerHeight}px`;
 
 // Start the application
 init().catch(console.error);
