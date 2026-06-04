@@ -8,10 +8,11 @@
 
 import type { NormalizedLandmark } from './types'
 
+
 export type ExpressionType = 'smile' | 'neutral' | 'surprise' | 'unknown'
 
 export interface DetectedExpression {
-  type: ExpressionType
+  type:       ExpressionType
   confidence: number
 }
 
@@ -24,7 +25,8 @@ const MOUTH_LEFT      = 61
 const MOUTH_RIGHT     = 291
 
 function dist2 (a: NormalizedLandmark, b: NormalizedLandmark): number {
-  const dx = b.x - a.x, dy = b.y - a.y
+  const dx = b.x - a.x,
+    dy     = b.y - a.y
   return Math.sqrt(dx * dx + dy * dy)
 }
 
@@ -40,18 +42,18 @@ export function detectExpression (face: NormalizedLandmark[]): DetectedExpressio
   if (eyeDist < 1e-4)
     return { type: 'unknown', confidence: 0 }
 
-  const upper  = face[UPPER_LIP_INNER]
-  const lower  = face[LOWER_LIP_INNER]
-  const left   = face[MOUTH_LEFT]
-  const right  = face[MOUTH_RIGHT]
+  const upper = face[UPPER_LIP_INNER]
+  const lower = face[LOWER_LIP_INNER]
+  const left  = face[MOUTH_LEFT]
+  const right = face[MOUTH_RIGHT]
 
   const mouthOpen  = dist2(upper, lower) / eyeDist
   const mouthWidth = dist2(left, right) / eyeDist
 
   // Corners lifted above the lip midline -> smile (screen y grows downward).
-  const lipMidY     = (upper.y + lower.y) / 2
-  const cornerY     = (left.y + right.y) / 2
-  const cornerLift  = (lipMidY - cornerY) / eyeDist
+  const lipMidY    = (upper.y + lower.y) / 2
+  const cornerY    = (left.y + right.y) / 2
+  const cornerLift = (lipMidY - cornerY) / eyeDist
 
   if (mouthOpen > 0.32)
     return { type: 'surprise', confidence: 0.8 }

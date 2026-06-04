@@ -29,15 +29,19 @@ import {
   PalmIndices
 } from './types'
 
+
 type Finger = keyof typeof FingerIndices
-const NON_THUMB: Finger[] = [ 'index', 'middle', 'ring', 'pinky' ]
+
+const NON_THUMB: Finger[]   = [ 'index', 'middle', 'ring', 'pinky' ]
 const ALL_FINGERS: Finger[] = [ 'thumb', 'index', 'middle', 'ring', 'pinky' ]
 
 // ---------------------------------------------------------------------------
 // Geometry helpers
 // ---------------------------------------------------------------------------
 function dist3 (a: NormalizedLandmark, b: NormalizedLandmark): number {
-  const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z
+  const dx = b.x - a.x,
+    dy     = b.y - a.y,
+    dz     = b.z - a.z
   return Math.sqrt(dx * dx + dy * dy + dz * dz)
 }
 
@@ -54,6 +58,7 @@ function handScale (landmarks: NormalizedLandmark[]): number {
 function isFingerExtended (landmarks: NormalizedLandmark[], finger: Finger, scale: number): boolean {
   if (finger === 'thumb')
     return isThumbExtended(landmarks, scale)
+
   const idx   = FingerIndices[finger]
   const wrist = landmarks[PalmIndices.wrist]
   const tip   = landmarks[idx.tip]
@@ -87,7 +92,7 @@ function extendedSet (landmarks: NormalizedLandmark[], scale: number): Record<Fi
 function thumbTouchingFinger (landmarks: NormalizedLandmark[], scale: number): Finger | null {
   const thumbTip = landmarks[FingerIndices.thumb.tip]
   let best: Finger | null = null
-  let bestDist = 0.55 * scale
+  let bestDist            = 0.55 * scale
   for (const finger of NON_THUMB) {
     const d = dist3(thumbTip, landmarks[FingerIndices[finger].tip])
     if (d < bestDist) {
@@ -99,13 +104,13 @@ function thumbTouchingFinger (landmarks: NormalizedLandmark[], scale: number): F
 }
 
 const OCTANTS = [
-  { tok: 'N',  arrow: '\u2191' },
+  { tok: 'N', arrow: '\u2191' },
   { tok: 'NE', arrow: '\u2197' },
-  { tok: 'E',  arrow: '\u2192' },
+  { tok: 'E', arrow: '\u2192' },
   { tok: 'SE', arrow: '\u2198' },
-  { tok: 'S',  arrow: '\u2193' },
+  { tok: 'S', arrow: '\u2193' },
   { tok: 'SW', arrow: '\u2199' },
-  { tok: 'W',  arrow: '\u2190' },
+  { tok: 'W', arrow: '\u2190' },
   { tok: 'NW', arrow: '\u2196' }
 ]
 
@@ -114,7 +119,9 @@ const OCTANTS = [
  * compass octants. `mirror` flips x so the direction matches the mirrored
  * on-screen preview.
  */
-function pointingOctant (landmarks: NormalizedLandmark[], mirror: boolean): { tok: string; label: string; deg: number } {
+type PointingOctantReturnType = { tok: string; label: string; deg: number }
+
+function pointingOctant (landmarks: NormalizedLandmark[], mirror: boolean): PointingOctantReturnType {
   const wrist = landmarks[PalmIndices.wrist]
   const tip   = landmarks[FingerIndices.middle.tip]
   const dx    = (tip.x - wrist.x) * (mirror ? -1 : 1)
@@ -122,6 +129,7 @@ function pointingOctant (landmarks: NormalizedLandmark[], mirror: boolean): { to
   let deg     = Math.atan2(dx, -dy) * (180 / Math.PI)
   if (deg < 0)
     deg += 360
+
   const sector = Math.round(deg / 45) % 8
   const o      = OCTANTS[sector]
   return { tok: o.tok, label: `${o.arrow} ${o.tok}  (${Math.round(deg)}\u00b0)`, deg }
@@ -142,12 +150,14 @@ function tiltFromVertical (landmarks: NormalizedLandmark[]): number {
  * preview. The palm/back convention may need a single sign flip per setup.
  */
 function palmFacing (landmarks: NormalizedLandmark[], mirror: boolean): boolean {
-  const m = mirror ? -1 : 1
-  const w = landmarks[PalmIndices.wrist]
-  const i = landmarks[FingerIndices.index.base]
-  const p = landmarks[FingerIndices.pinky.base]
-  const ax = (i.x - w.x) * m, ay = i.y - w.y
-  const bx = (p.x - w.x) * m, by = p.y - w.y
+  const m  = mirror ? -1 : 1
+  const w  = landmarks[PalmIndices.wrist]
+  const i  = landmarks[FingerIndices.index.base]
+  const p  = landmarks[FingerIndices.pinky.base]
+  const ax = (i.x - w.x) * m,
+    ay     = i.y - w.y
+  const bx = (p.x - w.x) * m,
+    by     = p.y - w.y
   const nz = ax * by - ay * bx
   return nz < 0
 }
@@ -161,6 +171,7 @@ function detectCircle (landmarks: NormalizedLandmark[], ext: Record<Finger, bool
   const touched = thumbTouchingFinger(landmarks, scale)
   if (!touched)
     return null
+
   const others    = NON_THUMB.filter(f => f !== touched)
   const openCount = others.filter(f => ext[f]).length
   return openCount >= 2 ? touched : null
@@ -253,6 +264,7 @@ export function detectGesture (
     const tilt = tiltFromVertical(landmarks)
     if (tilt < 35)
       return make('palm')
+
     const oct = pointingOctant(landmarks, mirror)
     return make('dash', oct.tok, oct.label)
   }
@@ -263,6 +275,7 @@ export function detectGesture (
     const straight = ALL_FINGERS.filter(f => ext[f])
     if (straight.length === 0)
       return make('fist', 'CLOSED', 'CLOSED')
+
     const tok   = straight.map(f => f.toUpperCase()).join('+')
     const label = straight.map(f => FINGER_LABEL[f]).join(' + ')
     return make('fist', tok, label)
@@ -288,10 +301,10 @@ export function runAllChecks (landmarks: NormalizedLandmark[]): CheckResult[] {
   const g     = detectGesture(landmarks, { label: 'Right', score: 1, index: 0 })
   return [
     { name: `=> ${g.type}${g.subLabel ? ' [' + g.subLabel + ']' : ''}`, passed: g.type !== 'unknown' },
-    { name: 'thumb extended',  passed: ext.thumb },
-    { name: 'index extended',  passed: ext.index },
+    { name: 'thumb extended', passed: ext.thumb },
+    { name: 'index extended', passed: ext.index },
     { name: 'middle extended', passed: ext.middle },
-    { name: 'ring extended',   passed: ext.ring },
-    { name: 'pinky extended',  passed: ext.pinky }
+    { name: 'ring extended', passed: ext.ring },
+    { name: 'pinky extended', passed: ext.pinky }
   ]
 }

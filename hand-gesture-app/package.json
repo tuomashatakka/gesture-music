@@ -3,23 +3,32 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "deploy": "pnpm build",
     "test": "vitest",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "electron": "electron electron/main.cjs",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:3333/gesture-music/ && ELECTRON_DEV=1 electron electron/main.cjs\"",
+    "rebuild": "electron-rebuild -f -w @julusian/midi"
   },
   "dependencies": {
+    "@julusian/midi": "^3.6.1",
     "@mediapipe/tasks-vision": "^0.10.35"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "@tuomashatakka/eslint-config": "^3.2.0",
     "@vitest/ui": "^4.1.7",
+    "concurrently": "^10.0.3",
+    "electron": "^42.3.3",
     "eslint": "^9.39.4",
     "typescript": "^6.0.2",
     "vite": "^8.0.12",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "wait-on": "^9.0.10"
   }
 }

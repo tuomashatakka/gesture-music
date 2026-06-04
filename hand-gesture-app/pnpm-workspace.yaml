@@ -1,0 +1,4 @@
+allowBuilds:
+  '@julusian/midi': true
+  electron: true
+  esbuild: true

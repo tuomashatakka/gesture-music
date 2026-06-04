@@ -20,21 +20,21 @@ export type {
   GlyphSVG,
   HandResult,
   CheckResult
-} from './types';
+} from './types'
 
 export {
   FingerIndices,
   PalmIndices
-} from './types';
+} from './types'
 
-export { detectGesture, detectGestures, runAllChecks } from './gestureDetector';
-export { GestureDebouncer } from './gestureDebouncer';
-export { TapDetector } from './tapDetector';
-export { detectExpression } from './faceExpression';
-export type { ExpressionType, DetectedExpression } from './faceExpression';
+export { detectGesture, detectGestures, runAllChecks } from './gestureDetector'
+export { GestureDebouncer } from './gestureDebouncer'
+export { TapDetector } from './tapDetector'
+export { detectExpression } from './faceExpression'
+export type { ExpressionType, DetectedExpression } from './faceExpression'
 export {
   generateGlyphSVG,
   symbolMarkup,
   getGlyphDataURL,
   createGlyphSVGElement
-} from './svgGenerator';
+} from './svgGenerator'

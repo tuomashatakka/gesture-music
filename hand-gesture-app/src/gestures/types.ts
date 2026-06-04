@@ -6,9 +6,9 @@
  * Normalized landmark from MediaPipe Hands
  */
 export interface NormalizedLandmark {
-  x: number;
-  y: number;
-  z: number;
+  x:           number;
+  y:           number;
+  z:           number;
   visibility?: number;
 }
 
@@ -25,9 +25,9 @@ export interface Handedness {
  * Hand result with landmarks and handedness
  */
 export interface HandResult {
-  landmarks: NormalizedLandmark[];
+  landmarks:  NormalizedLandmark[];
   handedness: Handedness;
-  index: number;
+  index:      number;
 }
 
 /**
@@ -40,12 +40,12 @@ export interface HandResult {
  * - unknown: nothing matched
  */
 export type GlyphType =
-  | 'palm'
-  | 'fist'
-  | 'circle'
-  | 'V'
-  | 'dash'
-  | 'unknown';
+  | 'palm' |
+  'fist' |
+  'circle' |
+  'V' |
+  'dash' |
+  'unknown'
 
 /**
  * Detected glyph with metadata.
@@ -55,12 +55,12 @@ export type GlyphType =
  * gesture WITHOUT changing it, so it never resets the held-delta reference.
  */
 export interface DetectedGlyph {
-  type: GlyphType;
+  type:        GlyphType;
   subGesture?: string;
-  subLabel?: string;
-  hand: 'left' | 'right' | 'unknown';
-  confidence: number; // 0-1 confidence score
-  landmarks: NormalizedLandmark[]; // The landmarks used for detection
+  subLabel?:   string;
+  hand:        'left' | 'right' | 'unknown';
+  confidence:  number; // 0-1 confidence score
+  landmarks:   NormalizedLandmark[]; // The landmarks used for detection
   boundingBox: { x: number; y: number; width: number; height: number }; // Bounding box of the hand
 }
 
@@ -68,9 +68,9 @@ export interface DetectedGlyph {
  * SVG representation of a glyph
  */
 export interface GlyphSVG {
-  svg: string;
-  width: number;
-  height: number;
+  svg:     string;
+  width:   number;
+  height:  number;
   viewBox: string;
 }
 
@@ -85,31 +85,31 @@ export interface GlyphSVG {
  * 17-20: pinky (tip at 20)
  */
 export const FingerIndices = {
-  thumb: { base: 1, tip: 4 },
-  index: { base: 5, tip: 8 },
+  thumb:  { base: 1, tip: 4 },
+  index:  { base: 5, tip: 8 },
   middle: { base: 9, tip: 12 },
-  ring: { base: 13, tip: 16 },
-  pinky: { base: 17, tip: 20 }
-} as const;
+  ring:   { base: 13, tip: 16 },
+  pinky:  { base: 17, tip: 20 }
+} as const
 
-export const WristIndex = 0 as const;
+export const WristIndex = 0 as const
 
 /**
  * Palm landmarks
  */
 export const PalmIndices = {
-  wrist: 0,
-  thumbBase: 1,
-  indexBase: 5,
+  wrist:      0,
+  thumbBase:  1,
+  indexBase:  5,
   middleBase: 9,
-  ringBase: 13,
-  pinkyBase: 17
-} as const;
+  ringBase:   13,
+  pinkyBase:  17
+} as const
 
 /**
  * Result of an individual gesture check
  */
 export interface CheckResult {
-  name: string;
+  name:   string;
   passed: boolean;
 }

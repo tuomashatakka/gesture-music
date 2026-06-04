@@ -6,6 +6,7 @@
 
 import type { GlyphType, GlyphSVG } from './types'
 
+
 const SVG_SIZE     = 100
 const STROKE_WIDTH = 8
 const STROKE_COLOR = '#00FF88'
@@ -32,7 +33,6 @@ export function symbolMarkup (
   <line x1="50" y1="88" x2="70" y2="22"/>
   <line x1="50" y1="88" x2="84" y2="40"/>
 </g>`
-
     case 'fist':
       // closed fist: filled rounded block with knuckle ticks
       return `<g>
@@ -42,17 +42,13 @@ export function symbolMarkup (
   <line x1="58" y1="33" x2="58" y2="22" stroke="${color}" stroke-width="${sw * 0.6}" stroke-linecap="round"/>
   <line x1="68" y1="34" x2="68" y2="24" stroke="${color}" stroke-width="${sw * 0.6}" stroke-linecap="round"/>
 </g>`
-
     case 'circle':
       // OK / open circle: a ring
       return `<circle cx="50" cy="50" r="30" fill="none" stroke="${color}" stroke-width="${sw}"/>`
-
     case 'V':
       return `<path d="M 22 18 L 50 82 L 78 18" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`
-
     case 'dash':
       return `<line x1="16" y1="50" x2="84" y2="50" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`
-
     // --- expression glyphs (little faces) --------------------------------
     case 'smile':
       return `<g fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round">
@@ -61,7 +57,6 @@ export function symbolMarkup (
   <circle cx="62" cy="42" r="3" fill="${color}" stroke="none"/>
   <path d="M 34 58 Q 50 74 66 58" fill="none"/>
 </g>`
-
     case 'neutral':
       return `<g fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round">
   <circle cx="50" cy="50" r="36"/>
@@ -69,7 +64,6 @@ export function symbolMarkup (
   <circle cx="62" cy="44" r="3" fill="${color}" stroke="none"/>
   <line x1="36" y1="62" x2="64" y2="62"/>
 </g>`
-
     case 'surprise':
       return `<g fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round">
   <circle cx="50" cy="50" r="36"/>
@@ -77,7 +71,6 @@ export function symbolMarkup (
   <circle cx="62" cy="42" r="3.5" fill="${color}" stroke="none"/>
   <circle cx="50" cy="64" r="8"/>
 </g>`
-
     case 'unknown':
     default:
       return `<circle cx="50" cy="50" r="34" fill="none" stroke="${color === STROKE_COLOR ? '#888' : color}" stroke-width="${sw}" stroke-dasharray="7,5"/>
@@ -105,10 +98,10 @@ export function getGlyphDataURL (type: GlyphType): string {
 
 /** Create an SVG element for a glyph. */
 export function createGlyphSVGElement (type: GlyphType, size: number = SVG_SIZE): SVGSVGElement {
-  const glyph    = generateGlyphSVG(type)
-  const parser   = new DOMParser()
-  const doc      = parser.parseFromString(glyph.svg, 'image/svg+xml')
-  const svgEl    = doc.documentElement.cloneNode(true) as SVGSVGElement
+  const glyph  = generateGlyphSVG(type)
+  const parser = new DOMParser()
+  const doc    = parser.parseFromString(glyph.svg, 'image/svg+xml')
+  const svgEl  = doc.documentElement.cloneNode(true) as SVGSVGElement
   svgEl.setAttribute('width', size.toString())
   svgEl.setAttribute('height', size.toString())
   svgEl.style.pointerEvents = 'none'

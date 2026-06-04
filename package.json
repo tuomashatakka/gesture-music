@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "lint": "pnpx eslint hand-gesture-app"
+    "lint": "pnpx eslint hand-gesture-app/src hand-gesture-app/electron"
   },
   "devDependencies": {
     "@tuomashatakka/eslint-config": "^3.2.2",
